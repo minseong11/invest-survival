@@ -1,0 +1,20 @@
+# Build
+build/
+.gradle/
+
+# IntelliJ
+.idea/
+*.iml
+
+# 민감 정보
+src/main/resources/application.yml
+
+# Mac
+.DS_Store
+
+
+이거 그건데
+프로젝트 아예 새로 만든거
+ㄴㄴㄴ
+깡통
+ㅇㅋ
