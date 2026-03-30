@@ -1,4 +1,4 @@
-package com.capstone.survival.invest_survival;
+package com.capstone.survival;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
