@@ -1,0 +1,32 @@
+서버에서 보내는 구조
+{
+  "success": true,
+  "data": {
+    "sessionId": "abc123",
+    "scenarioTitle": "리먼브라더스 사태",
+    "totalRounds": 10,
+    "initialAsset": 10000000,
+    "rounds": [
+      {
+        "round": 1,
+        "date": "2008-01-02",
+        "priceData": [
+          {
+            "ticker": "^SPX",
+            "open": 1447.16,
+            "close": 1411.63,
+            "high": 1447.16,
+            "low": 1403.97,
+            "changeRate": -2.46
+          }
+        ]
+      },
+      {
+        "round": 2,
+        "date": "2008-01-03",
+        "priceData": [...]
+      }
+    ]
+  },
+  "message": "OK"
+}

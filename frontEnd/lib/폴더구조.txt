@@ -1,0 +1,21 @@
+lib/
+  models/
+    scenario.dart
+    game_session.dart      ← 추가 예정 (게임 시작 응답)
+    round_data.dart        ← 추가 예정 (라운드 데이터)
+    action_result.dart     ← 추가 예정 (카드 선택 결과)
+
+  services/
+    api_client.dart
+    game_service.dart      ← startGame(), getRound(), submitAction() 추가 예정
+
+  screens/
+    scenario_screen.dart
+    game_screen.dart       ← 추가 예정
+    result_screen.dart     ← 추가 예정
+
+  widgets/
+    scenario_card.dart
+    stock_chart.dart       ← 추가 예정
+    action_card.dart       ← 추가 예정
+    asset_card.dart        ← 추가 예정

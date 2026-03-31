@@ -1,0 +1,40 @@
+import 'price_data.dart';
+
+class RoundData {
+  final int round;
+  final String date;
+  final List<PriceData> priceData;
+  final double? roundAsset;   // 카드 선택 전 = null
+  final double? returnRate;   // 카드 선택 전 = null
+
+  RoundData({
+    required this.round,
+    required this.date,
+    required this.priceData,
+    this.roundAsset,
+    this.returnRate,
+  });
+
+  factory RoundData.fromJson(Map<String, dynamic> json) {
+    final List<dynamic> priceList = json['priceData'] ?? [];
+    return RoundData(
+      round: json['round'] ?? 0,
+      date: json['date'] ?? '',
+      priceData: priceList.map((e) => PriceData.fromJson(e)).toList(),
+      roundAsset: json['roundAsset'] != null
+          ? (json['roundAsset'] as num).toDouble()
+          : null,
+      returnRate: json['returnRate'] != null
+          ? (json['returnRate'] as num).toDouble()
+          : null,
+    );
+  }
+
+  PriceData? getPrice(String ticker) {
+    try {
+      return priceData.firstWhere((p) => p.ticker == ticker);
+    } catch (_) {
+      return null;
+    }
+  }
+}
