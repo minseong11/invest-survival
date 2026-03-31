@@ -1,0 +1,46 @@
+GameSession (게임 전체)
+  ├── sessionId: "abc123"
+  ├── scenarioTitle: "리먼브라더스 사태"
+  ├── totalRounds: 10
+  ├── initialAsset: 10000000
+  └── rounds: [            ← RoundData 리스트
+        RoundData (1라운드 = 1월 2일)
+          ├── round: 1
+          ├── date: "2008-01-02"
+          └── priceData: [  ← PriceData 리스트
+                PriceData (SPX 종목)
+                  ├── ticker: "^SPX"
+                  ├── open: 1447.16
+                  ├── close: 1411.63
+                  ├── high: 1447.16
+                  ├── low: 1403.97
+                  └── changeRate: -2.46
+                PriceData (NDX 종목)
+                  ├── ticker: "^NDX"
+                  └── ...
+              ]
+        RoundData (2라운드 = 1월 3일)
+          ├── round: 2
+          ├── date: "2008-01-03"
+          └── priceData: [...]
+        ...
+      ]
+-----------------------------------------------------------------------------------
+      // 1라운드 데이터 꺼내기
+RoundData round1 = gameSession.rounds[0];
+
+// 1라운드의 날짜
+String date = round1.date;  // "2008-01-02"
+
+// 1라운드의 SPX 종목 데이터
+PriceData spx = round1.priceData[0];
+
+// SPX 종가
+double closePrice = spx.close;  // 1411.63
+```
+
+한 줄 요약:
+```
+GameSession  →  게임 전체 박스
+  RoundData  →  하루치 박스 (날짜 + 종목들)
+    PriceData →  종목 하나의 OHLC 데이터
