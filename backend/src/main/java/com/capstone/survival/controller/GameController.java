@@ -30,4 +30,17 @@ public class GameController {
     public ApiResponse<?> startGame(@RequestBody Map<String, Integer> request) {
         return ApiResponse.ok(gameService.startGame(request.get("scenarioId")));
     }
+
+    // POST /game/round/action
+    @PostMapping("/round/action")
+    public ApiResponse<?> selectCard(
+            @RequestBody Map<String, Object> request) {
+        String sessionId = (String) request.get("sessionId");
+        Integer round = (Integer) request.get("round");
+        Integer cardId = (Integer) request.get("cardId");
+
+        return ApiResponse.ok(
+                gameService.selectCard(sessionId, round, cardId)
+        );
+    }
 }

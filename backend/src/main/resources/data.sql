@@ -12,3 +12,12 @@ ON CONFLICT (id) DO UPDATE SET
     ticker = EXCLUDED.ticker,
     start_date = EXCLUDED.start_date,
     end_date = EXCLUDED.end_date;
+
+INSERT INTO card (id, name, ticker, ratio, description)
+VALUES
+    (1, '거인의 어깨', '^SPX', 0.3, '현재 자산의 30%로 S&P500 즉시 매수')
+    ON CONFLICT (id) DO UPDATE SET
+    name = EXCLUDED.name,
+                            ticker = EXCLUDED.ticker,
+                            ratio = EXCLUDED.ratio,
+                            description = EXCLUDED.description;
