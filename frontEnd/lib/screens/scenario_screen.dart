@@ -24,8 +24,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
   @override
   void initState() {
     super.initState();
-    // 앱 시작 시 자동으로 불러오지 않음
-    // 버튼으로 직접 선택해서 불러오도록 변경
+    _loadScenarios(); // 진입하자마자 자동 호출
   }
 
   // 실제 API 호출
@@ -51,10 +50,8 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
   // 임시 데이터로 불러오기 (fromJson 거침)
   void _loadMockScenarios() {
     setState(() => _isLoading = true);
-
     final List<dynamic> list = MockData.scenarios['data'] as List<dynamic>;
     final scenarios = list.map((json) => Scenario.fromJson(json)).toList();
-
     setState(() {
       _scenarios = scenarios;
       _isLoading = false;
@@ -79,14 +76,12 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
           content: Text(e.toString()),
           backgroundColor: Colors.red[700],
           behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
       );
     }
   }
 
-  // 임시 데이터로 게임 시작 (fromJson 거침)
   void _startMockGame(Scenario scenario) {
     final gameSession = GameSession.fromJson(
       MockData.gameSession['data'] as Map<String, dynamic>,
@@ -109,7 +104,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
             children: [
               _buildHeader(),
               const SizedBox(height: 20),
-              _buildMockButtons(), // 임시 버튼
+              _buildMockButtons(),
               const SizedBox(height: 20),
               Expanded(child: _buildBody()),
             ],
@@ -119,7 +114,6 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     );
   }
 
-  // 임시 데이터 버튼 영역
   Widget _buildMockButtons() {
     return Container(
       padding: const EdgeInsets.all(12),
@@ -142,6 +136,15 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
+              // 수동 API 요청 버튼
+              Expanded(
+                child: _mockButton(
+                  label: '시나리오 수동 요청',
+                  onTap: _loadScenarios,
+                ),
+              ),
+              const SizedBox(width: 8),
+              // 임시 mock 데이터 버튼
               Expanded(
                 child: _mockButton(
                   label: '임시 시나리오 불러오기',
@@ -149,9 +152,10 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+              // 임시 게임 바로 시작
               Expanded(
                 child: _mockButton(
-                  label: '임시 게임 바로 시작',
+                  label: '임시 게임 시작',
                   onTap: _scenarios.isEmpty
                       ? null
                       : () => _startMockGame(_scenarios[0]),
@@ -171,19 +175,22 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
         decoration: BoxDecoration(
-          color:
-              onTap == null ? const Color(0xFFEEEEEE) : const Color(0xFF111111),
+          color: onTap == null
+              ? const Color(0xFFEEEEEE)
+              : const Color(0xFF111111),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Text(
           label,
           textAlign: TextAlign.center,
           style: TextStyle(
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: FontWeight.w600,
-            color: onTap == null ? const Color(0xFFAAAAAA) : Colors.white,
+            color: onTap == null
+                ? const Color(0xFFAAAAAA)
+                : Colors.white,
           ),
         ),
       ),
@@ -199,15 +206,35 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const Icon(Icons.wifi_off_rounded, size: 36, color: Color(0xFF6B7684)),
+            const SizedBox(height: 12),
             Text(
               _errorMessage!,
               style: const TextStyle(color: Color(0xFF6B7684)),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            TextButton(
-              onPressed: _loadScenarios,
-              child: const Text('다시 시도'),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: _loadScenarios,
+                  child: const Text('다시 시도'),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  onPressed: _loadMockScenarios,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF111111),
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text('임시 데이터로 계속', style: TextStyle(fontSize: 13)),
+                ),
+              ],
             ),
           ],
         ),
@@ -216,7 +243,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     if (_scenarios.isEmpty) {
       return const Center(
         child: Text(
-          '위 버튼으로 시나리오를 불러오세요',
+          '시나리오를 불러올 수 없어요',
           style: TextStyle(color: Color(0xFF6B7684)),
         ),
       );
