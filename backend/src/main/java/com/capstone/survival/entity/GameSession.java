@@ -29,8 +29,11 @@ public class GameSession {
     // 기존 필드들 아래에 추가
     private Long cash;              // 현재 현금
     private Double spxShares;       // 보유 SPX 수량
-    private Double ndxShares;      // ← 새로 추가
-    private Double xauusdShares;   // ← 새로 추가
+    private Double ndxShares;
+    private Double xauusdShares;
+    private Double usoShares;
+    private Double aaplShares;
+    private Double tltShares;
     private Integer currentRound;   // 현재 라운드
     private String appliedCards;    // 적용된 카드 목록 "1,2"
 
@@ -54,6 +57,9 @@ public class GameSession {
         this.spxShares = 0.0;
         this.ndxShares = 0.0;
         this.xauusdShares = 0.0;
+        this.usoShares = 0.0;
+        this.aaplShares = 0.0;
+        this.tltShares = 0.0;
         this.currentRound = 1;
         this.appliedCards = "";
         this.triggerCount = "";
@@ -61,12 +67,17 @@ public class GameSession {
 
     // 상태 업데이트 메서드 추가
     public void update(Long cash, Double spxShares, Double ndxShares,
-                       Double xauusdShares, Integer currentRound,
+                       Double xauusdShares, Double usoShares,
+                       Double aaplShares, Double tltShares,
+                       Integer currentRound,
                        String appliedCards, String triggerCount) {
         this.cash = cash;
         this.spxShares = spxShares;
         this.ndxShares = ndxShares;
         this.xauusdShares = xauusdShares;
+        this.usoShares = usoShares;
+        this.aaplShares = aaplShares;
+        this.tltShares = tltShares;
         this.currentRound = currentRound;
         this.appliedCards = appliedCards;
         this.triggerCount = triggerCount;
