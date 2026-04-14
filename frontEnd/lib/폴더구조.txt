@@ -1,21 +1,22 @@
 lib/
   models/
     scenario.dart
-    game_session.dart      ← 추가 예정 (게임 시작 응답)
-    round_data.dart        ← 추가 예정 (라운드 데이터)
-    action_result.dart     ← 추가 예정 (카드 선택 결과)
+    game_session.dart
+    round_data.dart        ← triggeredCards 필드 추가 (v3)
+    action_result.dart
+    card_info.dart         ← 카드 11개로 확장 (v3)
+    price_data.dart
 
   services/
     api_client.dart
-    game_service.dart      ← startGame(), getRound(), submitAction() 추가 예정
+    game_service.dart
+    mock_data.dart
 
   screens/
     scenario_screen.dart
-    game_screen.dart       ← 추가 예정
-    result_screen.dart     ← 추가 예정
+    game_screen.dart       ← triggeredCards 표시, 결과화면 연결 (v3)
+    game_result_screen.dart ← 신규 추가 (v3)
 
   widgets/
     scenario_card.dart
-    stock_chart.dart       ← 추가 예정
-    action_card.dart       ← 추가 예정
-    asset_card.dart        ← 추가 예정
+    stock_chart.dart       ← 10배 배율, 내 자산 선, Y축 제거 (v3)

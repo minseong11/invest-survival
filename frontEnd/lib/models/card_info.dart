@@ -25,7 +25,7 @@ class CardInfo {
     }
   }
 
-  // 전체 카드 목록
+  // 전체 카드 목록 (v3 기준)
   static const List<CardInfo> all = [
     CardInfo(
       id: 1,
@@ -67,6 +67,42 @@ class CardInfo {
       name: '낙폭과대 사냥',
       description: 'NDX -4% 이하 시\n자산의 25% 나스닥 매수 (최대 3회)',
       emoji: '🎯',
+      ticker: '^NDX',
+    ),
+    // ── v3 추가 카드 ──────────────────────────
+    CardInfo(
+      id: 7,
+      name: '원유 베팅',
+      description: '현재 자산의 20%로\n원유 즉시 매수',
+      emoji: '🛢️',
+      ticker: 'USO',
+    ),
+    CardInfo(
+      id: 8,
+      name: '역발상 투자',
+      description: 'SPX +3% 이상 시\n자산의 15% SPX 매도',
+      emoji: '🔄',
+      ticker: '^SPX',
+    ),
+    CardInfo(
+      id: 9,
+      name: '애플 줍줍',
+      description: 'AAPL -5% 이하 시\n자산의 10% 애플 매수 (최대 5회)',
+      emoji: '🍎',
+      ticker: 'AAPL',
+    ),
+    CardInfo(
+      id: 10,
+      name: '채권 피난처',
+      description: '매 라운드\n자산의 3%씩 채권 매수',
+      emoji: '📜',
+      ticker: 'TLT',
+    ),
+    CardInfo(
+      id: 11,
+      name: '분할매수 장인',
+      description: '매 5라운드마다\n자산의 10% 나스닥 매수',
+      emoji: '📊',
       ticker: '^NDX',
     ),
   ];

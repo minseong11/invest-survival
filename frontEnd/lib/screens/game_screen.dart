@@ -7,6 +7,7 @@ import '../models/card_info.dart';
 import '../services/game_service.dart';
 import '../services/mock_data.dart';
 import '../widgets/stock_chart.dart';
+import 'game_result_screen.dart';
 
 class GameScreen extends StatefulWidget {
   final GameSession session;
@@ -37,23 +38,20 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   List<RoundData> get _chartData => _session.getChartData(
-    _currentRoundIndex.clamp(0, _session.rounds.length - 1),
-  );
+        _currentRoundIndex.clamp(0, _session.rounds.length - 1),
+      );
 
   // 현재 라운드 번호 (1-based)
   int get _currentRound1 => _currentRoundIndex + 1;
 
   bool get _showCard {
     if (_cardSelected) return false;
-    // cardSelectRounds가 있으면 그 기준으로, 없으면 1라운드에 표시
     if (_session.cardSelectRounds.isNotEmpty) {
       return _session.isCardSelectRound(_currentRound1);
     }
     return _currentRound1 == 1;
   }
 
-  // 카드 선택 전엔 종료 버튼 안 보임
-  // 다음 라운드가 카드 선택 라운드면 마지막 아님
   bool get _isLastRound {
     if (!_cardSelected) return false;
     final nextRound = _currentRoundIndex + 2;
@@ -77,7 +75,7 @@ class _GameScreenState extends State<GameScreen> {
   // ── 자동 진행 ──────────────────────────────
   void _startAutoPlay() {
     setState(() => _isAutoPlaying = true);
-    _autoTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+    _autoTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
       final nextRound = _currentRoundIndex + 2;
       final willHitCard = _session.isCardSelectRound(nextRound);
@@ -114,13 +112,24 @@ class _GameScreenState extends State<GameScreen> {
     });
   }
 
+  // ── 게임 종료 → 결과 화면 ───────────────────
+  void _goToResult() {
+    _stopAutoPlay();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => GameResultScreen(session: _session),
+      ),
+    );
+  }
+
   // ── 카드 선택 (실제 API) ────────────────────
   Future<void> _onCardSelected(int cardId) async {
     setState(() => _isSubmitting = true);
     try {
       final result = await _gameService.submitAction(
         sessionId: _session.sessionId,
-        round: _currentRound1,  // 1-based 라운드 번호
+        round: _currentRound1,
         cardId: cardId,
       );
       _applyActionResult(result);
@@ -148,7 +157,6 @@ class _GameScreenState extends State<GameScreen> {
 
   // ── ActionResult 반영 ───────────────────────
   void _applyActionResult(ActionResult result) {
-    // 디버그 확인용
     print('=== ActionResult ===');
     print('nextEventRound: ${result.nextEventRound}');
     print('nextCardOptions: ${result.nextCardOptions}');
@@ -156,16 +164,13 @@ class _GameScreenState extends State<GameScreen> {
     if (result.rounds.isNotEmpty) {
       print('rounds: ${result.rounds.first.round} ~ ${result.rounds.last.round}');
     }
-    // 기존 rounds에 새 rounds 덮어쓰기
-    // 서버가 준 rounds를 index 기준으로 교체
-    // 기존보다 크면 늘려서 추가
+
     final updatedRounds = List<RoundData>.from(_session.rounds);
     for (final newRound in result.rounds) {
       final index = newRound.round - 1;
       if (index < updatedRounds.length) {
-        updatedRounds[index] = newRound;         // 기존 자리 교체
+        updatedRounds[index] = newRound;
       } else {
-        // 기존 리스트보다 크면 빈칸 채우며 추가
         while (updatedRounds.length < index) {
           updatedRounds.add(updatedRounds.last);
         }
@@ -289,6 +294,8 @@ class _GameScreenState extends State<GameScreen> {
                 ? () => _onMockCardSelected(_currentCardOptions.isNotEmpty ? _currentCardOptions[0] : 1)
                 : null,
           )),
+          const SizedBox(width: 6),
+          Expanded(child: _devBtn('결과 화면', _goToResult)),
         ],
       ),
     );
@@ -343,49 +350,81 @@ class _GameScreenState extends State<GameScreen> {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFEEEEEE), width: 1),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(round.date, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7684))),
-                const SizedBox(height: 4),
-                Row(
-                  children: round.priceData.map((price) => Padding(
-                    padding: const EdgeInsets.only(right: 12),
-                    child: Row(
-                      children: [
-                        Container(width: 8, height: 8, decoration: BoxDecoration(
-                          color: tickerColor(price.ticker), shape: BoxShape.circle,
-                        )),
-                        const SizedBox(width: 4),
-                        Text(
-                          '${price.ticker} ${price.changeRate >= 0 ? '+' : ''}${price.changeRate.toStringAsFixed(2)}%',
-                          style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
-                            color: price.isPositive ? const Color(0xFFE03131) : const Color(0xFF1971C2)),
-                        ),
-                      ],
-                    ),
-                  )).toList(),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Row(
             children: [
-              const Text('총자산', style: TextStyle(fontSize: 11, color: Color(0xFF6B7684))),
-              Text('₩${_formatNumber(asset)}',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111111))),
-              if (returnRate != null)
-                Text(
-                  '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
-                    color: isPos ? const Color(0xFFE03131) : const Color(0xFF1971C2)),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(round.date, style: const TextStyle(fontSize: 12, color: Color(0xFF6B7684))),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: round.priceData.map((price) => Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 8, height: 8, decoration: BoxDecoration(
+                            color: tickerColor(price.ticker), shape: BoxShape.circle,
+                          )),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${price.ticker} ${price.changeRate >= 0 ? '+' : ''}${price.changeRate.toStringAsFixed(2)}%',
+                            style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600,
+                              color: price.isPositive ? const Color(0xFFE03131) : const Color(0xFF1971C2)),
+                          ),
+                        ],
+                      )).toList(),
+                    ),
+                  ],
                 ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text('총자산', style: TextStyle(fontSize: 11, color: Color(0xFF6B7684))),
+                  Text('₩${_formatNumber(asset)}',
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Color(0xFF111111))),
+                  if (returnRate != null)
+                    Text(
+                      '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600,
+                        color: isPos ? const Color(0xFFE03131) : const Color(0xFF1971C2)),
+                    ),
+                ],
+              ),
             ],
           ),
+
+          // triggeredCards 표시
+          if (round.triggeredCards.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEEEDFE),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Wrap(
+                spacing: 6,
+                children: round.triggeredCards.map((id) {
+                  final card = CardInfo.fromId(id);
+                  if (card == null) return const SizedBox.shrink();
+                  return Text(
+                    '${card.emoji} ${card.name} 발동',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF3C3489),
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -473,20 +512,28 @@ class _GameScreenState extends State<GameScreen> {
         ),
         const SizedBox(width: 10),
 
-        // 다음 라운드 버튼
+        // 다음 라운드 / 게임 종료 버튼
         Expanded(
           child: SizedBox(
             height: 52,
             child: ElevatedButton(
-              onPressed: (_isLastRound || _isAutoPlaying) ? null : _nextRound,
+              onPressed: _isAutoPlaying
+                  ? null
+                  : _isLastRound
+                      ? _goToResult
+                      : _nextRound,
               style: ElevatedButton.styleFrom(
-                backgroundColor: _isLastRound ? const Color(0xFFEEEEEE) : const Color(0xFF111111),
-                foregroundColor: _isLastRound ? const Color(0xFFAAAAAA) : Colors.white,
+                backgroundColor: _isLastRound
+                    ? const Color(0xFF3C3489)
+                    : const Color(0xFF111111),
+                foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
               ),
               child: Text(
-                _isLastRound ? '게임 종료' : '다음 라운드 ($_currentRound1 / ${_session.totalRounds})',
+                _isLastRound
+                    ? '결과 보기'
+                    : '다음 라운드 ($_currentRound1 / ${_session.totalRounds})',
                 style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
               ),
             ),
