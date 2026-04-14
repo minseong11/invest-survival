@@ -34,4 +34,6 @@ public class Card {
     private Integer maxTrigger;
     // null → 무제한
     // 3    → 최대 3회
+
+    private Integer priority;  // ← 새로 추가
 }

@@ -23,11 +23,14 @@ public class CsvImportService {
     private final StockPriceRepository stockPriceRepository;
 
     // CSV 파일 경로와 ticker 매핑
-    private static final Map<String, String> CSV_FILES = Map.of(
-            "^SPX",   System.getProperty("user.home") + "/Library/Mobile Documents/com~apple~CloudDocs/Documents/202330377/4-1/capstone/data/^spx_d.csv",
-            "^NDX",   System.getProperty("user.home") + "/Library/Mobile Documents/com~apple~CloudDocs/Documents/202330377/4-1/capstone/data/^ndx_d.csv",
-            "^KOSPI", System.getProperty("user.home") + "/Library/Mobile Documents/com~apple~CloudDocs/Documents/202330377/4-1/capstone/data/^kospi_d.csv",
-            "XAUUSD", System.getProperty("user.home") + "/Library/Mobile Documents/com~apple~CloudDocs/Documents/202330377/4-1/capstone/data/xauusd_d.csv"
+    private static final Map<String, String> CSV_FILES = Map.ofEntries(
+            Map.entry("^SPX",   "data/^spx_d.csv"),
+            Map.entry("^NDX",   "data/^ndx_d.csv"),
+            Map.entry("^KOSPI", "data/^kospi_d.csv"),
+            Map.entry("XAUUSD", "data/xauusd_d.csv"),
+            Map.entry("USO",    "data/uso_d.csv"),
+            Map.entry("AAPL",   "data/aapl_d.csv"),
+            Map.entry("TLT",    "data/tlt_d.csv")
     );
 
     /**
