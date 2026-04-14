@@ -11,3 +11,6 @@ src/main/resources/application.yml
 
 # Mac
 .DS_Store
+
+# data
+data/
