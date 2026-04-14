@@ -3,190 +3,221 @@ import 'package:flutter/material.dart';
 import '../models/round_data.dart';
 import '../models/price_data.dart';
 
+// 종목별 고정 색상
+const Map<String, Color> tickerColors = {
+  '^SPX': Color(0xFF1971C2),  // 파랑
+  '^NDX': Color(0xFF7048E8),  // 보라
+  'GLD':  Color(0xFFE67700),  // 노랑
+};
+
+Color tickerColor(String ticker) =>
+    tickerColors[ticker] ?? const Color(0xFF6B7684);
+
 class StockChart extends StatelessWidget {
   final List<RoundData> rounds;
-  final String ticker;
 
   const StockChart({
     super.key,
     required this.rounds,
-    required this.ticker,
   });
 
-  // ticker에 해당하는 종가(close) 리스트 추출
-  List<PriceData> get _prices {
-    return rounds
-        .map((r) => r.getPrice(ticker))
-        .whereType<PriceData>()
-        .toList();
+  // rounds에 존재하는 ticker 목록 추출
+  List<String> get _tickers {
+    if (rounds.isEmpty) return [];
+    final Set<String> seen = {};
+    final List<String> result = [];
+    for (final r in rounds) {
+      for (final p in r.priceData) {
+        if (seen.add(p.ticker)) result.add(p.ticker);
+      }
+    }
+    return result;
   }
 
-  // fl_chart용 FlSpot 리스트 변환 (x: 인덱스, y: 종가)
-  List<FlSpot> get _spots {
-    return List.generate(_prices.length, (i) {
-      return FlSpot(i.toDouble(), _prices[i].close);
-    });
+  // 특정 ticker의 FlSpot 리스트
+  List<FlSpot> _spots(String ticker) {
+    final List<FlSpot> spots = [];
+    for (int i = 0; i < rounds.length; i++) {
+      final price = rounds[i].getPrice(ticker);
+      if (price != null) {
+        spots.add(FlSpot(i.toDouble(), price.close));
+      }
+    }
+    return spots;
   }
 
+  // Y축 범위
   double get _minY {
-    if (_prices.isEmpty) return 0;
-    final min = _prices.map((p) => p.close).reduce((a, b) => a < b ? a : b);
-    return min * 0.98; // 아래 여백 2%
+    double min = double.infinity;
+    for (final r in rounds) {
+      for (final p in r.priceData) {
+        if (p.close < min) min = p.close;
+      }
+    }
+    return min == double.infinity ? 0 : min * 0.97;
   }
 
   double get _maxY {
-    if (_prices.isEmpty) return 100;
-    final max = _prices.map((p) => p.close).reduce((a, b) => a > b ? a : b);
-    return max * 1.02; // 위 여백 2%
-  }
-
-  // 상승/하락 색상 (첫날 대비 현재)
-  Color get _lineColor {
-    if (_prices.length < 2) return const Color(0xFF6B7684);
-    return _prices.last.close >= _prices.first.close
-        ? const Color(0xFFE03131) // 상승 빨강
-        : const Color(0xFF1971C2); // 하락 파랑
+    double max = double.negativeInfinity;
+    for (final r in rounds) {
+      for (final p in r.priceData) {
+        if (p.close > max) max = p.close;
+      }
+    }
+    return max == double.negativeInfinity ? 100 : max * 1.03;
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_prices.isEmpty) {
+    if (rounds.isEmpty) {
       return const Center(
-        child: Text(
-          '데이터 없음',
-          style: TextStyle(color: Color(0xFF6B7684)),
-        ),
+        child: Text('데이터 없음', style: TextStyle(color: Color(0xFF6B7684))),
       );
     }
 
-    return LineChart(
-      LineChartData(
-        minY: _minY,
-        maxY: _maxY,
-        minX: 0,
-        maxX: (_prices.length - 1).toDouble(),
+    final tickers = _tickers;
 
-        // 선 데이터
-        lineBarsData: [
-          LineChartBarData(
-            spots: _spots,
-            color: _lineColor,
-            barWidth: 2,
-            isCurved: true, // 부드러운 곡선
-            curveSmoothness: 0.3,
-            dotData: FlDotData(
-              show: true,
-              getDotPainter: (spot, percent, bar, index) {
-                // 마지막 점만 강조
-                final isLast = index == _spots.length - 1;
-                return FlDotCirclePainter(
-                  radius: isLast ? 5 : 3,
-                  color: _lineColor,
-                  strokeWidth: isLast ? 2 : 0,
-                  strokeColor: Colors.white,
+    return Column(
+      children: [
+        // 종목 범례 (여러 종목일 때만 표시)
+        if (tickers.length > 1)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: tickers.map((t) => Padding(
+                padding: const EdgeInsets.only(left: 12),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 12, height: 3,
+                      color: tickerColor(t),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(t, style: const TextStyle(
+                      fontSize: 10, color: Color(0xFF6B7684),
+                    )),
+                  ],
+                ),
+              )).toList(),
+            ),
+          ),
+
+        // 차트
+        Expanded(
+          child: LineChart(
+            LineChartData(
+              minY: _minY,
+              maxY: _maxY,
+              minX: 0,
+              maxX: (rounds.length - 1).toDouble(),
+
+              lineBarsData: tickers.map((ticker) {
+                final spots = _spots(ticker);
+                final color = tickerColor(ticker);
+                final isLast = ticker == tickers.last;
+                return LineChartBarData(
+                  spots: spots,
+                  color: color,
+                  barWidth: 2,
+                  isCurved: true,
+                  curveSmoothness: 0.3,
+                  dotData: FlDotData(
+                    show: true,
+                    getDotPainter: (spot, _, __, index) {
+                      final isLastDot = index == spots.length - 1;
+                      return FlDotCirclePainter(
+                        radius: isLastDot ? 4 : 0,
+                        color: color,
+                        strokeWidth: isLastDot ? 2 : 0,
+                        strokeColor: Colors.white,
+                      );
+                    },
+                  ),
+                  belowBarData: BarAreaData(
+                    show: isLast,
+                    color: color.withValues(alpha: 0.06),
+                  ),
                 );
-              },
-            ),
-            // 선 아래 그라데이션
-            belowBarData: BarAreaData(
-              show: true,
-              color: _lineColor.withValues(alpha: 0.08),
-            ),
-          ),
-        ],
+              }).toList(),
 
-        // 격자선
-        gridData: FlGridData(
-          show: true,
-          drawVerticalLine: false,
-          horizontalInterval: (_maxY - _minY) / 4,
-          getDrawingHorizontalLine: (_) => const FlLine(
-            color: Color(0xFFEEEEEE),
-            strokeWidth: 1,
-          ),
-        ),
+              gridData: FlGridData(
+                show: true,
+                drawVerticalLine: false,
+                horizontalInterval: (_maxY - _minY) / 4,
+                getDrawingHorizontalLine: (_) => const FlLine(
+                  color: Color(0xFFEEEEEE), strokeWidth: 1,
+                ),
+              ),
 
-        // 테두리
-        borderData: FlBorderData(
-          show: true,
-          border: const Border(
-            bottom: BorderSide(color: Color(0xFFEEEEEE), width: 1),
-            left: BorderSide(color: Color(0xFFEEEEEE), width: 1),
-          ),
-        ),
+              borderData: FlBorderData(
+                show: true,
+                border: const Border(
+                  bottom: BorderSide(color: Color(0xFFEEEEEE), width: 1),
+                  left:   BorderSide(color: Color(0xFFEEEEEE), width: 1),
+                ),
+              ),
 
-        // 축 레이블
-        titlesData: FlTitlesData(
-          bottomTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 28,
-              interval: 1,
-              getTitlesWidget: (value, meta) {
-                final index = value.toInt();
-                if (index < 0 || index >= rounds.length) {
-                  return const SizedBox.shrink();
-                }
-                final date = rounds[index].date;
-                final parts = date.split('-');
-                final label =
-                    parts.length >= 3 ? '${parts[1]}/${parts[2]}' : date;
-                return Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Text(
-                    label,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      color: Color(0xFF6B7684),
+              titlesData: FlTitlesData(
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 24,
+                    interval: (rounds.length / 5).ceilToDouble(),
+                    getTitlesWidget: (value, _) {
+                      final index = value.toInt();
+                      if (index < 0 || index >= rounds.length) {
+                        return const SizedBox.shrink();
+                      }
+                      final date = rounds[index].date;
+                      final parts = date.split('-');
+                      final label = parts.length >= 3
+                          ? '${parts[1]}/${parts[2]}'
+                          : date;
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(label, style: const TextStyle(
+                          fontSize: 9, color: Color(0xFF6B7684),
+                        )),
+                      );
+                    },
+                  ),
+                ),
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 52,
+                    getTitlesWidget: (value, _) => Text(
+                      value.toStringAsFixed(0),
+                      style: const TextStyle(
+                        fontSize: 9, color: Color(0xFF6B7684),
+                      ),
                     ),
                   ),
-                );
-              },
-            ),
-          ),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 56,
-              getTitlesWidget: (value, meta) {
-                return Text(
-                  value.toStringAsFixed(0),
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: Color(0xFF6B7684),
-                  ),
-                );
-              },
-            ),
-          ),
-          topTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-          rightTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false),
-          ),
-        ),
+                ),
+                topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              ),
 
-        // 터치 툴팁 (점 누르면 값 표시)
-        lineTouchData: LineTouchData(
-          touchTooltipData: LineTouchTooltipData(
-            getTooltipItems: (touchedSpots) {
-              return touchedSpots.map((spot) {
-                final index = spot.x.toInt();
-                final date = index < rounds.length ? rounds[index].date : '';
-                return LineTooltipItem(
-                  '$date\n${spot.y.toStringAsFixed(2)}',
-                  const TextStyle(
-                    color: Colors.white,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                );
-              }).toList();
-            },
+              lineTouchData: LineTouchData(
+                touchTooltipData: LineTouchTooltipData(
+                  getTooltipItems: (spots) => spots.map((spot) {
+                    final index = spot.x.toInt();
+                    final date = index < rounds.length ? rounds[index].date : '';
+                    return LineTooltipItem(
+                      '$date\n${spot.y.toStringAsFixed(2)}',
+                     const TextStyle(
+                        color: Colors.white, fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ),
           ),
         ),
-      ),
+      ],
     );
   }
 }
