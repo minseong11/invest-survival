@@ -1,16 +1,15 @@
-# Build
-build/
-.gradle/
+# 가상환경
+venv/
 
-# IntelliJ
-.idea/
-*.iml
+# 파이썬 캐시
+__pycache__/
+*.pyc
 
-# 민감 정보
-src/main/resources/application.yml
+# 학습된 모델 (용량 큼, 재학습 가능)
+*.pkl
 
-# Mac
+# Mac 시스템 파일
 .DS_Store
 
-# data
-data/
+# JSON 결과 파일 (필요시)
+data/simulation/result_*.json
