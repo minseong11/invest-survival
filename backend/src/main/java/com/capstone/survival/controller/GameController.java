@@ -7,6 +7,7 @@ import com.capstone.survival.service.GameService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,5 +43,19 @@ public class GameController {
         return ApiResponse.ok(
                 gameService.selectCard(sessionId, round, cardId)
         );
+    }
+
+    // POST /game/validate (Python 결과와 비교용 검증 엔드포인트)
+    @PostMapping("/validate")
+    public ApiResponse<?> validateGame(@RequestBody Map<String, Object> request) {
+        String startDate = (String) request.get("startDate");
+
+        // cardSelections: {"1": 1, "25": 2, "50": 3, "75": 4}
+        @SuppressWarnings("unchecked")
+        Map<String, Object> rawSelections = (Map<String, Object>) request.get("cardSelections");
+        Map<Integer, Integer> cardSelections = new LinkedHashMap<>();
+        rawSelections.forEach((k, v) -> cardSelections.put(Integer.parseInt(k), (Integer) v));
+
+        return ApiResponse.ok(gameService.validateGame(startDate, cardSelections));
     }
 }
