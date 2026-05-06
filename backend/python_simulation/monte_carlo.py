@@ -1,5 +1,6 @@
 """
-몬테카를로 시뮬레이션 — 학습 데이터 생성
+몬테카를로 시뮬레이션 — V1.5 학습 데이터 생성
+카드 선택 시점 인코딩: Card{i}_Round{r} 44차원
 """
 import os
 import random
@@ -12,16 +13,22 @@ from data_loader import get_price_list
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-OUTPUT_PATH = os.path.join(OUTPUT_DIR, 'training_data.csv')
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, 'training_data_v15.csv')
 
-ALL_CARD_IDS       = list(CARDS.keys())   # [1..11]
+ALL_CARD_IDS       = list(CARDS.keys())
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
 SIM_START          = datetime(2007, 9, 1)
-SIM_END            = datetime(2009, 6, 1)  # 100라운드 확보 위해 여유
+SIM_END            = datetime(2009, 6, 1)
+
+# V1.5 컬럼: Card{i}_Round{r} 44개
+CARD_ROUND_COLS = [
+    f'Card{i}_Round{r}'
+    for i in range(1, 12)
+    for r in CARD_SELECT_ROUNDS
+]
 
 
 def random_start_date() -> str:
-    """2007-09-01 ~ 2009-06-01 사이 랜덤 날짜"""
     delta = (SIM_END - SIM_START).days
     rand_day = SIM_START + timedelta(days=random.randint(0, delta))
     return rand_day.strftime('%Y-%m-%d')
@@ -39,12 +46,25 @@ def calc_spx_stats(start_date: str):
     return round(float(total_return), 4), round(volatility, 4)
 
 
+def make_card_round_encoding(card_selections: dict) -> dict:
+    """
+    card_selections: {1: 3, 25: 5, 50: 8, 75: 11}
+    -> Card3_Round1=1, Card5_Round25=1, ... 나머지 0
+    """
+    encoding = {col: 0 for col in CARD_ROUND_COLS}
+    for round_num, card_id in card_selections.items():
+        col = f'Card{card_id}_Round{round_num}'
+        if col in encoding:
+            encoding[col] = 1
+    return encoding
+
+
 def run_simulation(n: int = 1000):
     start_time = time.time()
     fieldnames = [
         'sim_id', 'scenario_id', 'start_date',
         'SPX_Return', 'SPX_Volatility',
-        *[f'Card{i}_Active' for i in range(1, 12)],
+        *CARD_ROUND_COLS,
         'Final_Return'
     ]
 
@@ -60,7 +80,7 @@ def run_simulation(n: int = 1000):
             if spx_return is None:
                 continue
 
-            # 카드 선택 (각 라운드마다 11개 중 3개 뽑고 1개 선택)
+            # 카드 선택 (각 라운드마다 3개 뽑고 1개 선택, 중복 없이)
             selected_ids = []
             card_selections = {}
             for r in CARD_SELECT_ROUNDS:
@@ -77,7 +97,8 @@ def run_simulation(n: int = 1000):
             except Exception:
                 continue
 
-            card_active = {f'Card{i}_Active': (1 if i in selected_ids else 0) for i in range(1, 12)}
+            # V1.5 인코딩
+            card_round_enc = make_card_round_encoding(card_selections)
 
             row = {
                 'sim_id':         sim_id,
@@ -85,7 +106,7 @@ def run_simulation(n: int = 1000):
                 'start_date':     start_date,
                 'SPX_Return':     spx_return,
                 'SPX_Volatility': spx_vol,
-                **card_active,
+                **card_round_enc,
                 'Final_Return':   result['final_return_rate'],
             }
             writer.writerow(row)
@@ -99,7 +120,7 @@ def run_simulation(n: int = 1000):
     elapsed = time.time() - start_time
     print(f'\n시뮬레이션 완료: {OUTPUT_PATH}')
     print(f'총 시간: {elapsed:.1f}초  /  1회 평균: {elapsed/max(completed,1)*1000:.1f}ms')
-    print(f'1만 회 예상: {elapsed/max(completed,1)*10000:.0f}초')
+    print(f'저장 건수: {completed}건')
 
 
 if __name__ == '__main__':
