@@ -1,20 +1,25 @@
 """
-V1.5 - 카드 선택 시점 인코딩 (44차원) 기반 RandomForest 모델
+V1.5 - 카드 선택 시점 인코딩 (44차원) RandomForest 모델
 
 구조:
   입력 46차원: SPX_Return, SPX_Volatility + Card{i}_Round{r} 44개
   출력: Final_Return (회귀)
 
 기능:
-  1. 모델 학습 + 정량 평가 (R2, MAE, RMSE, 베이스라인 비교)
-  2. 데이터 분포 분석 (교수님 피드백 5번 반영)
-  3. TOP 5 추천 + 3가지 추천 평가
+  - 모델 학습 + 정량 평가 (R2, MAE, RMSE)
+  - 베이스라인 비교 (평균 예측, LinearRegression)
+  - 시장 상황 입력 → TOP 5 카드 조합 추천 (CLI)
+  -> 교수님 피드백 1, 2번 반영
+
+데이터 분포 분석은 visualize_distribution.py
+추천 평가(피드백 3번)는 evaluate_v15.py
 """
 import os
 import pickle
-import random
 import numpy as np
 import pandas as pd
+import warnings
+warnings.filterwarnings('ignore')
 from itertools import permutations
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
@@ -44,28 +49,7 @@ FEATURE_COLS = ['SPX_Return', 'SPX_Volatility'] + CARD_ROUND_COLS  # 46차원
 
 
 # =============================================
-# 1. 데이터 분포 분석
-# =============================================
-def analyze_distribution(df: pd.DataFrame):
-    """Final_Return 분포 분석 (교수님 피드백 5번 반영)"""
-    ret = df['Final_Return']
-    print('\n===== 데이터 분포 분석 =====')
-    print(f'총 데이터: {len(df):,}건')
-    print(f'평균:     {ret.mean():.4f}%')
-    print(f'중앙값:   {ret.median():.4f}%')
-    print(f'표준편차: {ret.std():.4f}%')
-    print(f'최솟값:   {ret.min():.4f}%')
-    print(f'최댓값:   {ret.max():.4f}%')
-    positive = (ret > 0).sum()
-    negative = (ret <= 0).sum()
-    print(f'양수 수익률: {positive:,}건 ({positive/len(df)*100:.1f}%)')
-    print(f'음수 수익률: {negative:,}건 ({negative/len(df)*100:.1f}%)')
-    print(f'SPX_Return 평균: {df["SPX_Return"].mean():.4f}%')
-    print(f'SPX_Volatility 평균: {df["SPX_Volatility"].mean():.4f}')
-
-
-# =============================================
-# 2. 모델 학습 + 평가
+# 1. 모델 학습 + 평가 (피드백 1, 2번)
 # =============================================
 def train_and_evaluate(df: pd.DataFrame):
     """V1.5 RandomForest 학습 + 베이스라인 비교"""
@@ -123,7 +107,7 @@ def train_and_evaluate(df: pd.DataFrame):
 
 
 # =============================================
-# 3. TOP 5 추천 + 평가
+# 2. TOP 5 추천 (CLI용)
 # =============================================
 def make_feature(spx_return: float, spx_vol: float, card_selections: dict) -> list:
     """46차원 입력 벡터 생성"""
@@ -135,63 +119,43 @@ def make_feature(spx_return: float, spx_vol: float, card_selections: dict) -> li
     return [spx_return, spx_vol] + [enc[col] for col in CARD_ROUND_COLS]
 
 
-def evaluate_recommendation(model, spx_return: float, spx_vol: float):
-    """TOP 5 추천 + 3가지 평가"""
-    # 전체 순열 예측 (7,920가지)
+def recommend_top5(model, spx_return: float, spx_vol: float, top_n: int = 5):
+    """순열 7920개 전부 예측 → top_n 반환"""
     all_combos = []
     for combo in permutations(ALL_CARD_IDS, 4):
         card_selections = {1: combo[0], 25: combo[1], 50: combo[2], 75: combo[3]}
         feat = make_feature(spx_return, spx_vol, card_selections)
         pred = model.predict([feat])[0]
         all_combos.append((card_selections, pred))
+    
     all_combos.sort(key=lambda x: -x[1])
+    return all_combos[:top_n]
 
-    top5     = all_combos[:5]
-    true_top = all_combos[0]
 
-    # TOP 5 출력
-    print('\n===== TOP 5 추천 =====')
+def print_top5(top5):
+    """TOP 5 출력"""
+    print('\n' + '=' * 60)
+    print(' 🏆 TOP 5 추천 카드 조합')
+    print('=' * 60)
     for rank, (sel, pred) in enumerate(top5, 1):
-        names = [CARD_NAMES[sel[r]] for r in CARD_SELECT_ROUNDS]
-        print(f'  {rank}위 [{pred:+.2f}%]  {", ".join(names)}')
-        print(f'       1R={CARD_NAMES[sel[1]]}  25R={CARD_NAMES[sel[25]]}  '
-              f'50R={CARD_NAMES[sel[50]]}  75R={CARD_NAMES[sel[75]]}')
-
-    # 평가 1: TOP 5 vs 랜덤 vs 전체 평균
-    top5_avg   = np.mean([p for _, p in top5])
-    random5    = random.sample(all_combos, 5)
-    random_avg = np.mean([p for _, p in random5])
-    all_avg    = np.mean([p for _, p in all_combos])
-    print(f'\n===== 추천 평가 =====')
-    print(f'TOP 5 예측 평균:    {top5_avg:+.4f}%')
-    print(f'랜덤 5개 예측 평균: {random_avg:+.4f}%')
-    print(f'전체 평균 예측:     {all_avg:+.4f}%')
-
-    # 평가 2: 진짜 TOP 1과 일치도
-    top5_sels   = [frozenset(sel.values()) for sel, _ in top5]
-    true_top_sel = frozenset(true_top[0].values())
-    match = true_top_sel in top5_sels
-    true_names = ', '.join([CARD_NAMES[true_top[0][r]] for r in CARD_SELECT_ROUNDS])
-    print(f'\n진짜 1위 조합: {true_names} [{true_top[1]:+.2f}%]')
-    print(f'TOP 5에 포함: {"✅ 포함" if match else "❌ 미포함"}')
+        print(f'\n {rank}위 [{pred:+.2f}%]')
+        for r in CARD_SELECT_ROUNDS:
+            print(f'   라운드 {r:>2}: {CARD_NAMES[sel[r]]}')
 
 
 # =============================================
 # 메인
 # =============================================
-if __name__ == '__main__':
+def main():
     if not os.path.exists(DATA_PATH):
-        print(f'학습 데이터 없음: {DATA_PATH}')
+        print(f'❌ 학습 데이터 없음: {DATA_PATH}')
         print('먼저 monte_carlo.py를 실행하세요.')
-        exit(1)
+        return
 
     df = pd.read_csv(DATA_PATH)
     print(f'데이터 로드: {len(df):,}건  /  컬럼: {len(df.columns)}개')
 
-    # 1. 분포 분석
-    analyze_distribution(df)
-
-    # 2. 모델 학습 or 로드
+    # 학습 or 로드
     if os.path.exists(MODEL_PATH):
         ans = input('\n저장된 모델이 있습니다. 재학습할까요? (y/n): ').strip().lower()
         if ans == 'y':
@@ -203,26 +167,50 @@ if __name__ == '__main__':
     else:
         model = train_and_evaluate(df)
 
-    # 3. 추천 + 평가
-    print('\n===== 시장 상황 입력 =====')
-    print('예시: 리먼 폭락장 -> 수익률 -30, 변동성 3.5')
-    print('      잔잔한 상승장 -> 수익률 +20, 변동성 1.5')
-    try:
-        spx_return = float(input('SPX 수익률 입력 (%): '))
-        spx_vol    = float(input('SPX 변동성 입력: '))
-    except ValueError:
-        spx_return, spx_vol = -30.0, 3.5
-        print(f'기본값 사용: 수익률={spx_return}, 변동성={spx_vol}')
-
-    evaluate_recommendation(model, spx_return, spx_vol)
-
+    # CLI 추천
+    print('\n' + '=' * 60)
+    print(' 📊 카드 추천 시스템 (V1.5)')
+    print('=' * 60)
+    
     while True:
-        again = input('\n다른 시장 상황으로 추천받을까요? (y/n): ').strip().lower()
-        if again != 'y':
-            break
+        print()
+        print('-' * 60)
+        print(' 🌍 시장 수익률 (%)')
+        print('   강한 상승장: +20 이상  /  잔잔한 상승장: +5 ~ +20')
+        print('   횡보장:     -5 ~ +5')
+        print('   약한 하락장: -5 ~ -20  /  강한 하락장: -20 이하')
+        print('-' * 60)
         try:
-            spx_return = float(input('SPX 수익률 입력 (%): '))
-            spx_vol    = float(input('SPX 변동성 입력: '))
+            spx_return = float(input(' 시장 수익률 입력 → '))
         except ValueError:
+            print(' ⚠️  숫자를 입력해주세요.')
             continue
-        evaluate_recommendation(model, spx_return, spx_vol)
+
+        print()
+        print('-' * 60)
+        print(' 🌊 시장 변동성')
+        print('   잔잔: 1.0 ~ 1.5  /  보통: 1.5 ~ 2.5')
+        print('   격동: 2.5 ~ 4.0  /  극심: 4.0 이상')
+        print('-' * 60)
+        try:
+            spx_vol = float(input(' 시장 변동성 입력 → '))
+        except ValueError:
+            print(' ⚠️  숫자를 입력해주세요.')
+            continue
+
+        # 추천 실행
+        print('\n 분석 중... (전체 7920 순열 검사)')
+        top5 = recommend_top5(model, spx_return, spx_vol, top_n=5)
+        print_top5(top5)
+
+        # 계속할지
+        again = input('\n 다시 추천받으시겠습니까? (y/n) → ').strip().lower()
+        if again != 'y':
+            print(' 👋 종료합니다.')
+            print(' 추천 평가는 evaluate_v15.py 실행')
+            print(' 데이터 분포 분석은 visualize_distribution.py 실행')
+            break
+
+
+if __name__ == '__main__':
+    main()
