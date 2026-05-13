@@ -2,7 +2,7 @@
 V1.5 - 카드 선택 시점 인코딩 (44차원) RandomForest 모델
 
 구조:
-  입력 46차원: SPX_Return, SPX_Volatility + Card{i}_Round{r} 44개
+  입력 47차원: SPX_Return, SPX_Volatility, SPX_MDD + Card{i}_Round{r} 44개
   출력: Final_Return (회귀)
 
 기능:
@@ -45,7 +45,8 @@ CARD_ROUND_COLS = [
     for i in range(1, 12)
     for r in CARD_SELECT_ROUNDS
 ]
-FEATURE_COLS = ['SPX_Return', 'SPX_Volatility'] + CARD_ROUND_COLS  # 46차원
+# SPX_MDD 추가 → 47차원
+FEATURE_COLS = ['SPX_Return', 'SPX_Volatility', 'SPX_MDD'] + CARD_ROUND_COLS
 
 
 # =============================================
@@ -62,7 +63,7 @@ def train_and_evaluate(df: pd.DataFrame):
 
     print(f'\n===== 모델 학습 =====')
     print(f'학습: {len(X_train):,}건  /  테스트: {len(X_test):,}건')
-    print(f'입력 차원: {X.shape[1]}차원 (SPX 2 + 카드시점 44)')
+    print(f'입력 차원: {X.shape[1]}차원 (SPX 3 + 카드시점 44)')
 
     # 베이스라인 1: 평균 예측
     mean_pred = np.full_like(y_test, y_train.mean())
@@ -109,25 +110,27 @@ def train_and_evaluate(df: pd.DataFrame):
 # =============================================
 # 2. TOP 5 추천 (CLI용)
 # =============================================
-def make_feature(spx_return: float, spx_vol: float, card_selections: dict) -> list:
-    """46차원 입력 벡터 생성"""
+def make_feature(spx_return: float, spx_vol: float, spx_mdd: float,
+                 card_selections: dict) -> list:
+    """47차원 입력 벡터 생성"""
     enc = {col: 0 for col in CARD_ROUND_COLS}
     for round_num, card_id in card_selections.items():
         col = f'Card{card_id}_Round{round_num}'
         if col in enc:
             enc[col] = 1
-    return [spx_return, spx_vol] + [enc[col] for col in CARD_ROUND_COLS]
+    return [spx_return, spx_vol, spx_mdd] + [enc[col] for col in CARD_ROUND_COLS]
 
 
-def recommend_top5(model, spx_return: float, spx_vol: float, top_n: int = 5):
+def recommend_top5(model, spx_return: float, spx_vol: float,
+                   spx_mdd: float, top_n: int = 5):
     """순열 7920개 전부 예측 → top_n 반환"""
     all_combos = []
     for combo in permutations(ALL_CARD_IDS, 4):
         card_selections = {1: combo[0], 25: combo[1], 50: combo[2], 75: combo[3]}
-        feat = make_feature(spx_return, spx_vol, card_selections)
+        feat = make_feature(spx_return, spx_vol, spx_mdd, card_selections)
         pred = model.predict([feat])[0]
         all_combos.append((card_selections, pred))
-    
+
     all_combos.sort(key=lambda x: -x[1])
     return all_combos[:top_n]
 
@@ -171,7 +174,7 @@ def main():
     print('\n' + '=' * 60)
     print(' 📊 카드 추천 시스템 (V1.5)')
     print('=' * 60)
-    
+
     while True:
         print()
         print('-' * 60)
@@ -198,9 +201,21 @@ def main():
             print(' ⚠️  숫자를 입력해주세요.')
             continue
 
+        print()
+        print('-' * 60)
+        print(' 📉 시장 MDD (최대낙폭률, %)')
+        print('   완만: 0 ~ -10%  /  보통: -10 ~ -20%')
+        print('   급락: -20 ~ -35%  /  대폭락: -35% 이하')
+        print('-' * 60)
+        try:
+            spx_mdd = float(input(' 시장 MDD 입력 → '))
+        except ValueError:
+            print(' ⚠️  숫자를 입력해주세요.')
+            continue
+
         # 추천 실행
         print('\n 분석 중... (전체 7920 순열 검사)')
-        top5 = recommend_top5(model, spx_return, spx_vol, top_n=5)
+        top5 = recommend_top5(model, spx_return, spx_vol, spx_mdd, top_n=5)
         print_top5(top5)
 
         # 계속할지
