@@ -2,6 +2,7 @@
 몬테카를로 시뮬레이션 — V1.5 학습 데이터 생성
 카드 선택 시점 인코딩: Card{i}_Round{r} 44차원
 10만 건 확장 + multiprocessing 병렬화
+SPX_MDD 컬럼 추가 (100라운드 기준 최대낙폭률)
 """
 import os
 import random
@@ -33,7 +34,7 @@ CARD_ROUND_COLS = [
 
 FIELDNAMES = [
     'sim_id', 'scenario_id', 'start_date',
-    'SPX_Return', 'SPX_Volatility',
+    'SPX_Return', 'SPX_Volatility', 'SPX_MDD',
     *CARD_ROUND_COLS,
     'Final_Return'
 ]
@@ -46,15 +47,26 @@ def random_start_date() -> str:
 
 
 def calc_spx_stats(start_date: str):
-    """SPX 100라운드 수익률 및 변동성 계산"""
+    """SPX 100라운드 수익률, 변동성, MDD 계산"""
     spx = get_price_list(start_date, '^SPX')
     if len(spx) < 100:
-        return None, None
+        return None, None, None
     closes = spx.iloc[:100]['Close'].values
+
+    # 수익률
     total_return = (closes[-1] - closes[0]) / closes[0] * 100
+
+    # 변동성
     daily_returns = np.diff(closes) / closes[:-1] * 100
     volatility = float(np.std(daily_returns))
-    return round(float(total_return), 4), round(volatility, 4)
+
+    # MDD (최대낙폭률)
+    cumulative = closes / closes[0]
+    rolling_max = np.maximum.accumulate(cumulative)
+    drawdowns = (cumulative - rolling_max) / rolling_max * 100
+    mdd = float(drawdowns.min())
+
+    return round(float(total_return), 4), round(volatility, 4), round(mdd, 4)
 
 
 def make_card_round_encoding(card_selections: dict) -> dict:
@@ -92,7 +104,7 @@ def run_chunk(args):
             sim_id = sim_id_start + i
             start_date = random_start_date()
 
-            spx_return, spx_vol = calc_spx_stats(start_date)
+            spx_return, spx_vol, spx_mdd = calc_spx_stats(start_date)
             if spx_return is None:
                 continue
 
@@ -121,6 +133,7 @@ def run_chunk(args):
                 'start_date':     start_date,
                 'SPX_Return':     spx_return,
                 'SPX_Volatility': spx_vol,
+                'SPX_MDD':        spx_mdd,
                 **card_round_enc,
                 'Final_Return':   result['final_return_rate'],
             }
