@@ -2,12 +2,14 @@
 V1.5 추천 시스템 평가 (교수님 피드백 3번 반영)
 
 3가지 평가:
-  1. TOP 5 추천 조합의 실제 평균 수익률
-  2. 무작위 5개 조합 대비 우수성
+  1. TOP 5 추천 조합의 실제 평균/중앙값 수익률
+  2. 무작위 5개 조합 대비 우수성 (평균/중앙값)
   3. AI TOP 5와 실제 TOP 5의 일치도
 
 ※ 매칭 조건은 교수님 제안대로 SPX_Return만 사용
 ※ 모델 예측 시 SPX_MDD 포함 (47차원)
+※ 평가 3은 최소 매칭 건수(MIN_MATCH_COUNT) 이상만 실제 TOP 후보로 사용
+※ 중앙값 병기 (교수님 피드백 2-B: fat tail 강건성)
 """
 import warnings
 warnings.filterwarnings('ignore')
@@ -26,6 +28,10 @@ MODEL_PATH = os.path.join(DATA_DIR, 'model_v15.pkl')
 
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
 ALL_CARD_IDS       = list(range(1, 12))
+
+# 평가 3: 실제 TOP 후보로 인정할 최소 매칭 건수
+# 1건짜리 운빨 조합을 제외하여 통계적 신뢰성 확보
+MIN_MATCH_COUNT = 3
 
 CARD_NAMES = {
     1: '거인의 어깨',   2: '황금 적립',     3: '공포탐욕',
@@ -103,60 +109,71 @@ def find_matching_games(df: pd.DataFrame, card_selections: dict,
 
 
 # =============================================
-# 평가 1: TOP 5 추천 실제 평균 수익률
+# 평가 1: TOP 5 추천 실제 평균/중앙값 수익률
 # =============================================
 def evaluate_actual_return(df, ai_top5, spx_return):
-    """AI가 추천한 TOP 5의 실제 평균 수익률 측정"""
+    """AI가 추천한 TOP 5의 실제 평균/중앙값 수익률 측정"""
     print('\n' + '=' * 60)
-    print(' [평가 1] TOP 5 추천 조합의 실제 평균 수익률')
+    print(' [평가 1] TOP 5 추천 조합의 실제 평균/중앙값 수익률')
     print('=' * 60)
 
-    actual_returns = []
+    actual_means   = []
+    actual_medians = []
 
     for rank, (sel, predicted) in enumerate(ai_top5, 1):
         matching = find_matching_games(df, sel, spx_return)
         names = [CARD_NAMES[sel[r]] for r in CARD_SELECT_ROUNDS]
 
         if len(matching) > 0:
-            actual_avg = matching['Final_Return'].mean()
-            actual_returns.append(actual_avg)
-            print(f' {rank}위: 예측 {predicted:+.2f}% / 실제 {actual_avg:+.2f}% '
+            actual_avg    = matching['Final_Return'].mean()
+            actual_median = matching['Final_Return'].median()
+            actual_means.append(actual_avg)
+            actual_medians.append(actual_median)
+            print(f' {rank}위: 예측 {predicted:+.2f}% / '
+                  f'실제 평균 {actual_avg:+.2f}% / 중앙값 {actual_median:+.2f}% '
                   f'({len(matching)}건)')
         else:
             print(f' {rank}위: 예측 {predicted:+.2f}% / 실제 데이터 없음')
         print(f'     {", ".join(names)}')
 
-    if actual_returns:
-        avg_predicted = np.mean([p for _, p in ai_top5])
-        avg_actual = np.mean(actual_returns)
-        print(f'\n TOP 5 예측 평균: {avg_predicted:+.2f}%')
-        print(f' TOP 5 실제 평균: {avg_actual:+.2f}%')
-        print(f' 예측 오차:       {abs(avg_predicted - avg_actual):.2f}%p')
-        return avg_actual
-    return None
+    if actual_means:
+        avg_predicted  = np.mean([p for _, p in ai_top5])
+        avg_actual     = np.mean(actual_means)
+        median_actual  = np.median(actual_medians)
+        print(f'\n TOP 5 예측 평균:    {avg_predicted:+.2f}%')
+        print(f' TOP 5 실제 평균:    {avg_actual:+.2f}%')
+        print(f' TOP 5 실제 중앙값:  {median_actual:+.2f}%')
+        print(f' 예측 오차 (평균):   {abs(avg_predicted - avg_actual):.2f}%p')
+        print(f' 예측 오차 (중앙값): {abs(avg_predicted - median_actual):.2f}%p')
+        return avg_actual, median_actual
+    return None, None
 
 
 # =============================================
-# 평가 2: 랜덤 5개 조합 대비 우수성
+# 평가 2: 랜덤 5개 조합 대비 우수성 (평균/중앙값)
 # =============================================
 def evaluate_random_comparison(df, ai_top5, spx_return, n_trials: int = 100):
-    """랜덤하게 뽑은 5개 조합과 AI TOP 5 비교"""
+    """랜덤하게 뽑은 5개 조합과 AI TOP 5 비교 (평균/중앙값)"""
     print('\n' + '=' * 60)
     print(' [평가 2] 무작위 5개 조합 대비 AI 추천의 우수성')
     print('=' * 60)
 
-    # AI TOP 5 실제 평균
-    ai_returns = []
+    # AI TOP 5 실제 평균/중앙값
+    ai_means   = []
+    ai_medians = []
     for sel, _ in ai_top5:
         matching = find_matching_games(df, sel, spx_return)
         if len(matching) > 0:
-            ai_returns.append(matching['Final_Return'].mean())
+            ai_means.append(matching['Final_Return'].mean())
+            ai_medians.append(matching['Final_Return'].median())
 
-    ai_avg = np.mean(ai_returns) if ai_returns else 0
+    ai_avg    = np.mean(ai_means)      if ai_means   else 0
+    ai_median = np.median(ai_medians)  if ai_medians else 0
 
     # 랜덤 5개 조합
     print(f' 랜덤 비교 진행 중... ({n_trials}회)')
-    random_avgs = []
+    random_means   = []
+    random_medians = []
 
     for trial in range(n_trials):
         if (trial + 1) % 20 == 0:
@@ -168,43 +185,60 @@ def evaluate_random_comparison(df, ai_top5, spx_return, n_trials: int = 100):
             sel = {1: combo[0], 25: combo[1], 50: combo[2], 75: combo[3]}
             random_combos.append(sel)
 
-        trial_returns = []
+        trial_means   = []
+        trial_medians = []
         for sel in random_combos:
             matching = find_matching_games(df, sel, spx_return)
             if len(matching) > 0:
-                trial_returns.append(matching['Final_Return'].mean())
+                trial_means.append(matching['Final_Return'].mean())
+                trial_medians.append(matching['Final_Return'].median())
 
-        if trial_returns:
-            random_avgs.append(np.mean(trial_returns))
+        if trial_means:
+            random_means.append(np.mean(trial_means))
+            random_medians.append(np.median(trial_medians))
 
-    random_avg = np.mean(random_avgs) if random_avgs else 0
+    random_avg    = np.mean(random_means)      if random_means   else 0
+    random_median = np.median(random_medians)  if random_medians else 0
 
-    print(f'\n AI TOP 5 실제 평균:  {ai_avg:+.2f}%')
-    print(f' 랜덤 5개 평균 ({n_trials}회): {random_avg:+.2f}%')
-    print(f' AI 우수성:           {ai_avg - random_avg:+.2f}%p')
+    print(f'\n [평균 기준]')
+    print(f'   AI TOP 5 실제 평균:       {ai_avg:+.2f}%')
+    print(f'   랜덤 5개 평균 ({n_trials}회):    {random_avg:+.2f}%')
+    print(f'   AI 우수성:                {ai_avg - random_avg:+.2f}%p')
+
+    print(f'\n [중앙값 기준] (fat tail 강건)')
+    print(f'   AI TOP 5 실제 중앙값:     {ai_median:+.2f}%')
+    print(f'   랜덤 5개 중앙값 ({n_trials}회):  {random_median:+.2f}%')
+    print(f'   AI 우수성:                {ai_median - random_median:+.2f}%p')
 
     if ai_avg > random_avg:
-        print(f' ✅ AI 추천이 랜덤보다 평균 {ai_avg - random_avg:.2f}%p 우수')
+        print(f'\n ✅ AI 추천이 랜덤보다 평균 {ai_avg - random_avg:.2f}%p 우수')
     else:
-        print(f' ⚠️  AI 추천이 랜덤과 비슷하거나 못함 (모델 개선 필요)')
+        print(f'\n ⚠️  AI 추천이 랜덤과 비슷하거나 못함 (모델 개선 필요)')
 
-    return ai_avg, random_avg
+    return ai_avg, random_avg, ai_median, random_median
 
 
 # =============================================
 # 평가 3: 진짜 TOP 5와 일치도
 # =============================================
 def evaluate_match_with_true_top(df, ai_top5, spx_return):
-    """AI TOP 5와 실제 데이터 기반 진짜 TOP 5의 일치도"""
+    """
+    AI TOP 5와 실제 데이터 기반 진짜 TOP 5의 일치도
+
+    ※ 개선: 최소 MIN_MATCH_COUNT건 이상 매칭된 조합만 실제 TOP 후보로 사용
+       1건짜리 운빨 조합을 제외하여 통계적 신뢰성 확보
+    """
     print('\n' + '=' * 60)
     print(' [평가 3] AI TOP 5 vs 실제 TOP 5 일치도')
     print('=' * 60)
+    print(f' (실제 TOP 후보 조건: 최소 {MIN_MATCH_COUNT}건 이상 매칭)')
 
     all_perms = list(permutations(ALL_CARD_IDS, 4))
     total = len(all_perms)
     print(f' 실제 TOP 5 계산 중... (총 {total:,}개 순열 검사)')
 
     all_combos_actual = []
+    excluded_count = 0  # MIN_MATCH_COUNT 미만으로 제외된 조합 수
 
     for i, combo in enumerate(all_perms):
         if (i + 1) % 1000 == 0:
@@ -213,19 +247,30 @@ def evaluate_match_with_true_top(df, ai_top5, spx_return):
         sel = {1: combo[0], 25: combo[1], 50: combo[2], 75: combo[3]}
         matching = find_matching_games(df, sel, spx_return)
 
-        if len(matching) >= 1:
-            actual_avg = matching['Final_Return'].mean()
-            all_combos_actual.append((sel, actual_avg, len(matching)))
+        if len(matching) >= MIN_MATCH_COUNT:
+            actual_avg    = matching['Final_Return'].mean()
+            actual_median = matching['Final_Return'].median()
+            all_combos_actual.append((sel, actual_avg, actual_median, len(matching)))
+        elif len(matching) >= 1:
+            excluded_count += 1
 
-    print(f'   완료! (실제 데이터 있는 조합: {len(all_combos_actual):,}개)')
+    print(f'   완료!')
+    print(f'   실제 TOP 후보 ({MIN_MATCH_COUNT}건 이상): {len(all_combos_actual):,}개')
+    print(f'   제외된 조합 (1~{MIN_MATCH_COUNT-1}건): {excluded_count:,}개')
 
+    if len(all_combos_actual) == 0:
+        print(f'\n ⚠️  {MIN_MATCH_COUNT}건 이상 매칭된 조합이 없어 평가 불가')
+        print(f'    시뮬레이션 데이터 확장이 필요합니다.')
+        return 0, []
+
+    # 실제 평균 기준 정렬
     all_combos_actual.sort(key=lambda x: -x[1])
     true_top5 = all_combos_actual[:5]
 
-    print('\n [실제 TOP 5 (시뮬레이션 데이터 기반)]')
-    for rank, (sel, actual, count) in enumerate(true_top5, 1):
+    print(f'\n [실제 TOP 5 (시뮬레이션 데이터 기반, 최소 {MIN_MATCH_COUNT}건 이상)]')
+    for rank, (sel, actual, median, count) in enumerate(true_top5, 1):
         names = [CARD_NAMES[sel[r]] for r in CARD_SELECT_ROUNDS]
-        print(f'  {rank}위: 실제 {actual:+.2f}% ({count}건)')
+        print(f'  {rank}위: 실제 평균 {actual:+.2f}% / 중앙값 {median:+.2f}% ({count}건)')
         print(f'      {", ".join(names)}')
 
     print('\n [AI TOP 5 (모델 예측 기반)]')
@@ -236,7 +281,7 @@ def evaluate_match_with_true_top(df, ai_top5, spx_return):
 
     # 일치도 계산
     true_top5_keys = set()
-    for sel, _, _ in true_top5:
+    for sel, _, _, _ in true_top5:
         key = tuple(sorted(sel.items()))
         true_top5_keys.add(key)
 
@@ -315,7 +360,7 @@ def main():
     # 평가 2 (매칭: SPX_Return만)
     evaluate_random_comparison(df, ai_top5, spx_return, n_trials=100)
 
-    # 평가 3 (매칭: SPX_Return만)
+    # 평가 3 (매칭: SPX_Return만, 최소 MIN_MATCH_COUNT건)
     evaluate_match_with_true_top(df, ai_top5, spx_return)
 
     elapsed = time.time() - start_time
