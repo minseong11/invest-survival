@@ -19,7 +19,9 @@ from xgboost import XGBRegressor
 
 DATA_DIR   = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
 DATA_PATH  = os.path.join(DATA_DIR, 'training_data_v2.csv')
-MODEL_PATH = os.path.join(DATA_DIR, 'model_v2.pkl')
+MODEL_PATH     = os.path.join(DATA_DIR, 'model_v2.pkl')
+MODEL_RF_PATH  = os.path.join(DATA_DIR, 'model_v2_rf.pkl')
+MODEL_XGB_PATH = os.path.join(DATA_DIR, 'model_v2_xgb.pkl')
 
 ALL_CARD_IDS       = list(range(1, 12))
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
@@ -120,18 +122,12 @@ def train_and_evaluate(df: pd.DataFrame):
     if r2_xgb > r2_rf:
         best_model = xgb
         best_name  = 'XGBoost'
-        best_r2    = r2_xgb
-        imp_series = pd.Series(
-            xgb.feature_importances_, index=FEATURE_COLS
-        )
+        imp_series = pd.Series(xgb.feature_importances_, index=FEATURE_COLS)
         print(f'\n✅ 최적 모델: XGBoost (R² {r2_xgb:.4f} > RF {r2_rf:.4f})')
     else:
         best_model = rf
         best_name  = 'RandomForest'
-        best_r2    = r2_rf
-        imp_series = pd.Series(
-            rf.feature_importances_, index=FEATURE_COLS
-        )
+        imp_series = pd.Series(rf.feature_importances_, index=FEATURE_COLS)
         print(f'\n✅ 최적 모델: RandomForest (R² {r2_rf:.4f} >= XGB {r2_xgb:.4f})')
 
     # Feature Importance 출력
@@ -149,10 +145,18 @@ def train_and_evaluate(df: pd.DataFrame):
     print(f'  Selected_Card 합계:   {selected_imp:.4f} ({selected_imp*100:.1f}%)')
     print(f'  current_round:        {imp_series["current_round"]:.4f} ({imp_series["current_round"]*100:.1f}%)')
 
-    # 최적 모델 저장
+    # 모델 저장 (RF, XGB 각각 + 최적 모델)
+    with open(MODEL_RF_PATH, 'wb') as f:
+        pickle.dump(rf, f)
+    print(f'\nRF 모델 저장: {MODEL_RF_PATH}')
+
+    with open(MODEL_XGB_PATH, 'wb') as f:
+        pickle.dump(xgb, f)
+    print(f'XGB 모델 저장: {MODEL_XGB_PATH}')
+
     with open(MODEL_PATH, 'wb') as f:
         pickle.dump(best_model, f)
-    print(f'\n모델 저장: {MODEL_PATH} ({best_name})')
+    print(f'최적 모델 저장: {MODEL_PATH} ({best_name})')
 
     return best_model
 
