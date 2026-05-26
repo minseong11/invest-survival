@@ -1,20 +1,9 @@
 """
-V2 - 실시간 카드 추천 모델
-라운드별 스냅샷 데이터(40만 row) 학습
+V2 재설계 - Card_Contribution 타겟 모델
+실시간 카드 추천 시스템
 
-구조:
-  입력 25차원:
-    SPX_Return_so_far, SPX_Volatility_so_far, SPX_MDD_so_far (3)
-    current_round (1)
-    Already_Card1~11 (multi-hot, 11)
-    Selected_Card_1~11 (one-hot, 11)
-  출력: Final_Return (회귀)
-
-기능:
-  - 모델 학습 + 정량 평가 (R², MAE, RMSE)
-  - 베이스라인 비교 (평균 예측, LinearRegression)
-  - V1.5 모델과 성능 비교
-  - 실시간 추천 CLI
+타겟: Card_Contribution (평균 대비 카드 기여도)
+입력: 26차원 (시장 3 + current_round 1 + Already 11 + Selected 11)
 """
 import os
 import pickle
@@ -27,9 +16,9 @@ from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-DATA_DIR    = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
-DATA_PATH   = os.path.join(DATA_DIR, 'training_data_v2.csv')
-MODEL_PATH  = os.path.join(DATA_DIR, 'model_v2.pkl')
+DATA_DIR   = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
+DATA_PATH  = os.path.join(DATA_DIR, 'training_data_v2.csv')
+MODEL_PATH = os.path.join(DATA_DIR, 'model_v2.pkl')
 
 ALL_CARD_IDS       = list(range(1, 12))
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
@@ -51,24 +40,24 @@ FEATURE_COLS = [
     'current_round',
     *ALREADY_COLS,
     *SELECTED_COLS,
-]  # 총 25차원
+]  # 총 26차원
 
 
 # =============================================
 # 1. 모델 학습 + 평가
 # =============================================
 def train_and_evaluate(df: pd.DataFrame):
-    """V2 RandomForest 학습 + 베이스라인 비교"""
     X = df[FEATURE_COLS].values
-    y = df['Final_Return'].values
+    y = df['Card_Contribution'].values
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )
 
-    print(f'\n===== V2 모델 학습 =====')
+    print(f'\n===== V2 재설계 모델 학습 =====')
     print(f'학습: {len(X_train):,}건  /  테스트: {len(X_test):,}건')
     print(f'입력 차원: {X.shape[1]}차원')
+    print(f'타겟: Card_Contribution (평균 대비 카드 기여도)')
 
     # 베이스라인 1: 평균 예측
     mean_pred = np.full_like(y_test, y_train.mean())
@@ -95,7 +84,7 @@ def train_and_evaluate(df: pd.DataFrame):
     r2_rf   = r2_score(y_test, rf_pred)
     mae_rf  = mean_absolute_error(y_test, rf_pred)
     rmse_rf = np.sqrt(mean_squared_error(y_test, rf_pred))
-    print(f'\n[RandomForest V2]')
+    print(f'\n[RandomForest V2 재설계]')
     print(f'  R²: {r2_rf:.4f}  MAE: {mae_rf:.4f}%  RMSE: {rmse_rf:.4f}%')
 
     # 비교 요약
@@ -104,15 +93,24 @@ def train_and_evaluate(df: pd.DataFrame):
     print('-' * 45)
     print(f'{"평균 예측 (베이스라인1)":<25} {r2_mean:>8.4f} {mae_mean:>9.4f}%')
     print(f'{"LinearRegression":<25} {r2_lr:>8.4f} {mae_lr:>9.4f}%')
-    print(f'{"RandomForest V2":<25} {r2_rf:>8.4f} {mae_rf:>9.4f}%')
+    print(f'{"RandomForest V2 재설계":<25} {r2_rf:>8.4f} {mae_rf:>9.4f}%')
 
-    print(f'\n===== V1.5 vs V2 성능 비교 =====')
-    print(f'{"항목":<20} {"V1.5":>10} {"V2":>10}')
-    print('-' * 42)
-    print(f'{"학습 데이터":<20} {"10만 row":>10} {"40만 row":>10}')
-    print(f'{"입력 차원":<20} {"47차원":>10} {"25차원":>10}')
-    print(f'{"R²":<20} {"0.8787":>10} {r2_rf:>10.4f}')
-    print(f'{"MAE":<20} {"2.7899%":>10} {mae_rf:>9.4f}%')
+    # Feature Importance 출력
+    print(f'\n===== Feature Importance (상위 15개) =====')
+    imp = pd.Series(rf.feature_importances_, index=FEATURE_COLS)
+    imp_sorted = imp.sort_values(ascending=False)
+    for feat, val in imp_sorted.head(15).items():
+        bar = '█' * int(val * 200)
+        print(f'  {feat:<30} {val:.4f}  {bar}')
+
+    # Selected_Card 합계
+    selected_imp = imp[[c for c in FEATURE_COLS if 'Selected' in c]].sum()
+    already_imp  = imp[[c for c in FEATURE_COLS if 'Already' in c]].sum()
+    market_imp   = imp[['SPX_Return_so_far', 'SPX_Volatility_so_far', 'SPX_MDD_so_far']].sum()
+    print(f'\n  시장 지표 합계:       {market_imp:.4f} ({market_imp*100:.1f}%)')
+    print(f'  Already_Card 합계:    {already_imp:.4f} ({already_imp*100:.1f}%)')
+    print(f'  Selected_Card 합계:   {selected_imp:.4f} ({selected_imp*100:.1f}%)')
+    print(f'  current_round:        {imp["current_round"]:.4f} ({imp["current_round"]*100:.1f}%)')
 
     # 모델 저장
     with open(MODEL_PATH, 'wb') as f:
@@ -128,13 +126,11 @@ def train_and_evaluate(df: pd.DataFrame):
 def make_feature(spx_return: float, spx_vol: float, spx_mdd: float,
                  current_round: int, already_cards: list,
                  selected_card: int) -> list:
-    """25차원 입력 벡터 생성"""
     already_enc  = {f'Already_Card{i}': 0 for i in range(1, 12)}
     selected_enc = {f'Selected_Card_{i}': 0 for i in range(1, 12)}
 
     for card_id in already_cards:
         already_enc[f'Already_Card{card_id}'] = 1
-
     selected_enc[f'Selected_Card_{selected_card}'] = 1
 
     return [
@@ -146,10 +142,6 @@ def make_feature(spx_return: float, spx_vol: float, spx_mdd: float,
 
 def recommend_card(model, spx_return: float, spx_vol: float, spx_mdd: float,
                    current_round: int, already_cards: list) -> list:
-    """
-    현재 상태에서 선택 가능한 카드들을 예측 후 순위 반환
-    already_cards: 이미 선택한 카드 ID 리스트
-    """
     candidates = [c for c in ALL_CARD_IDS if c not in already_cards]
 
     features = [
@@ -163,47 +155,44 @@ def recommend_card(model, spx_return: float, spx_vol: float, spx_mdd: float,
         zip(candidates, predictions),
         key=lambda x: -x[1]
     )
-    return results  # [(card_id, predicted_return), ...]
+    return results
 
 
 # =============================================
 # 3. CLI
 # =============================================
 def run_cli(model):
-    """실시간 추천 CLI"""
     print('\n' + '=' * 60)
-    print(' 📊 V2 실시간 카드 추천 시스템')
+    print(' 📊 V2 실시간 카드 추천 시스템 (재설계)')
+    print(' 추천 기준: 평균 대비 카드 기여도 (Card_Contribution)')
     print('=' * 60)
 
     while True:
         print('\n' + '-' * 60)
         try:
-            spx_return = float(input(' SPX 수익률 so_far (%) → '))
-            spx_vol    = float(input(' SPX 변동성 so_far    → '))
-            spx_mdd    = float(input(' SPX MDD so_far (%)   → '))
+            spx_return    = float(input(' SPX 수익률 so_far (%) → '))
+            spx_vol       = float(input(' SPX 변동성 so_far    → '))
+            spx_mdd       = float(input(' SPX MDD so_far (%)   → '))
             current_round = int(input(' 현재 라운드 (1/25/50/75) → '))
         except ValueError:
             print(' ⚠️  숫자를 입력해주세요.')
             continue
 
         if current_round not in CARD_SELECT_ROUNDS:
-            print(f' ⚠️  라운드는 1, 25, 50, 75 중 하나여야 합니다.')
+            print(' ⚠️  라운드는 1, 25, 50, 75 중 하나여야 합니다.')
             continue
 
         # 이미 선택한 카드 입력
         already_cards = []
         round_idx = CARD_SELECT_ROUNDS.index(current_round)
         if round_idx > 0:
-            print(f' 이미 선택한 카드 {round_idx}개를 입력하세요.')
+            print(f'\n 이미 선택한 카드 {round_idx}개를 입력하세요.')
+            print(' ' + ', '.join([f'{k}:{v}' for k, v in CARD_NAMES.items()]))
             for i in range(round_idx):
-                print(f'   카드 목록: ' +
-                      ', '.join([f'{k}:{v}' for k, v in CARD_NAMES.items()]))
                 try:
                     card_id = int(input(f'   {i+1}번째 카드 ID → '))
                     if card_id in ALL_CARD_IDS:
                         already_cards.append(card_id)
-                    else:
-                        print(f'   ⚠️  1~11 사이 ID를 입력하세요.')
                 except ValueError:
                     pass
 
@@ -213,10 +202,11 @@ def run_cli(model):
             current_round, already_cards
         )
 
-        print(f'\n {"순위":<4} {"카드":>14} {"예측 수익률":>12}')
-        print(' ' + '-' * 34)
-        for rank, (card_id, pred) in enumerate(results[:5], 1):
-            print(f' {rank}위   {CARD_NAMES[card_id]:>14}   {pred:>+.2f}%')
+        print(f'\n {"순위":<4} {"카드":>14} {"기여도 예측":>12}')
+        print(' ' + '-' * 36)
+        for rank, (card_id, pred) in enumerate(results, 1):
+            marker = ' ★' if rank == 1 else ''
+            print(f' {rank}위   {CARD_NAMES[card_id]:>14}   {pred:>+.2f}%{marker}')
 
         again = input('\n 다시 추천받으시겠습니까? (y/n) → ').strip().lower()
         if again != 'y':
@@ -236,8 +226,9 @@ def main():
     df = pd.read_csv(DATA_PATH)
     print(f'데이터 로드: {len(df):,}건  /  컬럼: {len(df.columns)}개')
     print(f'게임 수: {df["sim_id"].nunique():,}개')
+    print(f'Card_Contribution 평균: {df["Card_Contribution"].mean():.4f}%')
+    print(f'Card_Contribution 표준편차: {df["Card_Contribution"].std():.4f}%')
 
-    # 학습 or 로드
     if os.path.exists(MODEL_PATH):
         ans = input('\n저장된 모델이 있습니다. 재학습할까요? (y/n): ').strip().lower()
         if ans == 'y':
