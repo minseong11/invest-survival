@@ -1,6 +1,6 @@
 """
 V2 재설계 - Card_Contribution 타겟 모델
-실시간 카드 추천 시스템
+RandomForest vs XGBoost 비교
 
 타겟: Card_Contribution (평균 대비 카드 기여도)
 입력: 26차원 (시장 3 + current_round 1 + Already 11 + Selected 11)
@@ -15,6 +15,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from xgboost import XGBRegressor
 
 DATA_DIR   = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
 DATA_PATH  = os.path.join(DATA_DIR, 'training_data_v2.csv')
@@ -75,7 +76,8 @@ def train_and_evaluate(df: pd.DataFrame):
     print(f'\n[베이스라인 - LinearRegression]')
     print(f'  R²: {r2_lr:.4f}  MAE: {mae_lr:.4f}%')
 
-    # RandomForest V2
+    # RandomForest
+    print(f'\n[RandomForest 학습 중...]')
     rf = RandomForestRegressor(
         n_estimators=100, max_depth=10, random_state=42, n_jobs=-1
     )
@@ -84,8 +86,26 @@ def train_and_evaluate(df: pd.DataFrame):
     r2_rf   = r2_score(y_test, rf_pred)
     mae_rf  = mean_absolute_error(y_test, rf_pred)
     rmse_rf = np.sqrt(mean_squared_error(y_test, rf_pred))
-    print(f'\n[RandomForest V2 재설계]')
     print(f'  R²: {r2_rf:.4f}  MAE: {mae_rf:.4f}%  RMSE: {rmse_rf:.4f}%')
+
+    # XGBoost
+    print(f'\n[XGBoost 학습 중...]')
+    xgb = XGBRegressor(
+        n_estimators=200,
+        max_depth=6,
+        learning_rate=0.1,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=42,
+        n_jobs=-1,
+        verbosity=0,
+    )
+    xgb.fit(X_train, y_train)
+    xgb_pred = xgb.predict(X_test)
+    r2_xgb   = r2_score(y_test, xgb_pred)
+    mae_xgb  = mean_absolute_error(y_test, xgb_pred)
+    rmse_xgb = np.sqrt(mean_squared_error(y_test, xgb_pred))
+    print(f'  R²: {r2_xgb:.4f}  MAE: {mae_xgb:.4f}%  RMSE: {rmse_xgb:.4f}%')
 
     # 비교 요약
     print(f'\n===== 모델 비교 요약 =====')
@@ -93,31 +113,48 @@ def train_and_evaluate(df: pd.DataFrame):
     print('-' * 45)
     print(f'{"평균 예측 (베이스라인1)":<25} {r2_mean:>8.4f} {mae_mean:>9.4f}%')
     print(f'{"LinearRegression":<25} {r2_lr:>8.4f} {mae_lr:>9.4f}%')
-    print(f'{"RandomForest V2 재설계":<25} {r2_rf:>8.4f} {mae_rf:>9.4f}%')
+    print(f'{"RandomForest V2":<25} {r2_rf:>8.4f} {mae_rf:>9.4f}%')
+    print(f'{"XGBoost V2":<25} {r2_xgb:>8.4f} {mae_xgb:>9.4f}%')
+
+    # 최적 모델 선택
+    if r2_xgb > r2_rf:
+        best_model = xgb
+        best_name  = 'XGBoost'
+        best_r2    = r2_xgb
+        imp_series = pd.Series(
+            xgb.feature_importances_, index=FEATURE_COLS
+        )
+        print(f'\n✅ 최적 모델: XGBoost (R² {r2_xgb:.4f} > RF {r2_rf:.4f})')
+    else:
+        best_model = rf
+        best_name  = 'RandomForest'
+        best_r2    = r2_rf
+        imp_series = pd.Series(
+            rf.feature_importances_, index=FEATURE_COLS
+        )
+        print(f'\n✅ 최적 모델: RandomForest (R² {r2_rf:.4f} >= XGB {r2_xgb:.4f})')
 
     # Feature Importance 출력
-    print(f'\n===== Feature Importance (상위 15개) =====')
-    imp = pd.Series(rf.feature_importances_, index=FEATURE_COLS)
-    imp_sorted = imp.sort_values(ascending=False)
+    print(f'\n===== Feature Importance - {best_name} (상위 15개) =====')
+    imp_sorted = imp_series.sort_values(ascending=False)
     for feat, val in imp_sorted.head(15).items():
         bar = '█' * int(val * 200)
         print(f'  {feat:<30} {val:.4f}  {bar}')
 
-    # Selected_Card 합계
-    selected_imp = imp[[c for c in FEATURE_COLS if 'Selected' in c]].sum()
-    already_imp  = imp[[c for c in FEATURE_COLS if 'Already' in c]].sum()
-    market_imp   = imp[['SPX_Return_so_far', 'SPX_Volatility_so_far', 'SPX_MDD_so_far']].sum()
+    selected_imp = imp_series[[c for c in FEATURE_COLS if 'Selected' in c]].sum()
+    already_imp  = imp_series[[c for c in FEATURE_COLS if 'Already' in c]].sum()
+    market_imp   = imp_series[['SPX_Return_so_far', 'SPX_Volatility_so_far', 'SPX_MDD_so_far']].sum()
     print(f'\n  시장 지표 합계:       {market_imp:.4f} ({market_imp*100:.1f}%)')
     print(f'  Already_Card 합계:    {already_imp:.4f} ({already_imp*100:.1f}%)')
     print(f'  Selected_Card 합계:   {selected_imp:.4f} ({selected_imp*100:.1f}%)')
-    print(f'  current_round:        {imp["current_round"]:.4f} ({imp["current_round"]*100:.1f}%)')
+    print(f'  current_round:        {imp_series["current_round"]:.4f} ({imp_series["current_round"]*100:.1f}%)')
 
-    # 모델 저장
+    # 최적 모델 저장
     with open(MODEL_PATH, 'wb') as f:
-        pickle.dump(rf, f)
-    print(f'\n모델 저장: {MODEL_PATH}')
+        pickle.dump(best_model, f)
+    print(f'\n모델 저장: {MODEL_PATH} ({best_name})')
 
-    return rf
+    return best_model
 
 
 # =============================================
@@ -182,7 +219,6 @@ def run_cli(model):
             print(' ⚠️  라운드는 1, 25, 50, 75 중 하나여야 합니다.')
             continue
 
-        # 이미 선택한 카드 입력
         already_cards = []
         round_idx = CARD_SELECT_ROUNDS.index(current_round)
         if round_idx > 0:
@@ -196,7 +232,6 @@ def run_cli(model):
                 except ValueError:
                     pass
 
-        # 추천 실행
         results = recommend_card(
             model, spx_return, spx_vol, spx_mdd,
             current_round, already_cards
