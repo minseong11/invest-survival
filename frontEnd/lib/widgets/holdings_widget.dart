@@ -3,68 +3,52 @@ import '../models/card_info.dart';
 import '../models/round_data.dart';
 
 // =============================================
-// 보유 종목 데이터
+// 보유 카드 데이터
 // =============================================
-class HoldingInfo {
+class HoldingCardInfo {
+  final int cardId;
   final String ticker;
   final String cardName;
   final String emoji;
   final double currentChangeRate;
-  final List<double> recentChanges; // 스파크라인용 등락률 히스토리
-  final bool isNew;                 // 이번 라운드 새로 추가됐는지
+  final bool isNew;
 
-  HoldingInfo({
+  HoldingCardInfo({
+    required this.cardId,
     required this.ticker,
     required this.cardName,
     required this.emoji,
     required this.currentChangeRate,
-    required this.recentChanges,
     this.isNew = false,
   });
 }
 
-// =============================================
-// 선택된 카드 목록에서 보유 종목 추출
-// =============================================
-List<HoldingInfo> extractHoldings({
+// 선택된 카드 목록에서 보유 카드 추출
+// ^SPX 포함, 선택한 카드 기준 (중복 티커도 각각 슬롯)
+List<HoldingCardInfo> extractHoldingCards({
   required List<int> selectedCardIds,
   required List<RoundData> rounds,
   required int currentRoundIndex,
-  int? newCardId, // 이번 라운드 새로 선택한 카드
+  int? newCardId,
 }) {
-  final holdings  = <HoldingInfo>[];
-  final seenTickers = <String>{};
-
-  // SPX는 기준 지수 → 보유 종목에서 제외
-  const exclude = {'^SPX'};
+  final holdings = <HoldingCardInfo>[];
 
   for (final cardId in selectedCardIds) {
     final card = CardInfo.fromId(cardId);
     if (card == null) continue;
-    if (exclude.contains(card.ticker)) continue;
-    if (seenTickers.contains(card.ticker)) continue;
-    seenTickers.add(card.ticker);
 
-    // 현재 등락률
     final currentRound = currentRoundIndex < rounds.length
         ? rounds[currentRoundIndex]
         : null;
-    final changeRate = currentRound?.getPrice(card.ticker)?.changeRate ?? 0.0;
+    final changeRate =
+        currentRound?.getPrice(card.ticker)?.changeRate ?? 0.0;
 
-    // 최근 20라운드 등락률 히스토리
-    final history = <double>[];
-    final start = (currentRoundIndex - 19).clamp(0, rounds.length - 1);
-    for (int i = start; i <= currentRoundIndex && i < rounds.length; i++) {
-      final p = rounds[i].getPrice(card.ticker);
-      if (p != null) history.add(p.changeRate);
-    }
-
-    holdings.add(HoldingInfo(
+    holdings.add(HoldingCardInfo(
+      cardId:            cardId,
       ticker:            card.ticker,
       cardName:          card.name,
       emoji:             card.emoji,
       currentChangeRate: changeRate,
-      recentChanges:     history,
       isNew:             cardId == newCardId,
     ));
   }
@@ -73,61 +57,22 @@ List<HoldingInfo> extractHoldings({
 }
 
 // =============================================
-// 스파크라인 페인터
+// 보유 카드 위젯 (게임 진행 중 / 카드 선택 모두 동일)
+// 2x2 공간 고정, 빈 슬롯 없음, 발동 애니메이션
 // =============================================
-class _SparklinePainter extends CustomPainter {
-  final List<double> values;
-  final Color color;
+class HoldingCardsWidget extends StatelessWidget {
+  final List<HoldingCardInfo> cards;
+  final List<int> triggeredCardIds; // 이번 라운드 발동한 카드
 
-  _SparklinePainter({required this.values, required this.color});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (values.length < 2) return;
-    final min = values.reduce((a, b) => a < b ? a : b);
-    final max = values.reduce((a, b) => a > b ? a : b);
-    final range = (max - min).abs();
-
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1.5
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke;
-
-    final path = Path();
-    for (int i = 0; i < values.length; i++) {
-      final x = i / (values.length - 1) * size.width;
-      final normalized = range < 0.001 ? 0.5 : (values[i] - min) / range;
-      // 위아래 10% 여백
-      final y = size.height - normalized * size.height * 0.8 - size.height * 0.1;
-      if (i == 0) {
-        path.moveTo(x, y);
-      } else {
-        path.lineTo(x, y);
-      }
-    }
-    canvas.drawPath(path, paint);
-  }
-
-  @override
-  bool shouldRepaint(_SparklinePainter old) =>
-      old.values != values || old.color != color;
-}
-
-// =============================================
-// 게임 진행 중 보유종목 위젯 (스파크라인)
-// 1~3개: 기본 크기, 4개: 이름 숨기고 축소
-// =============================================
-class HoldingsGameWidget extends StatelessWidget {
-  final List<HoldingInfo> holdings;
-
-  const HoldingsGameWidget({super.key, required this.holdings});
+  const HoldingCardsWidget({
+    super.key,
+    required this.cards,
+    this.triggeredCardIds = const [],
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (holdings.isEmpty) return const SizedBox.shrink();
-
-    final compact = holdings.length == 4;
+    if (cards.isEmpty) return const SizedBox.shrink();
 
     return Container(
       width: double.infinity,
@@ -140,233 +85,194 @@ class HoldingsGameWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '보유 종목 (${holdings.length})',
-            style: const TextStyle(
+          const Text(
+            '보유 카드',
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: Color(0xFF6B7684),
             ),
           ),
           const SizedBox(height: 8),
-          Row(
-            children: holdings.asMap().entries.map((entry) {
-              final i    = entry.key;
-              final h    = entry.value;
-              final last = i == holdings.length - 1;
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: last ? 0 : 6),
-                  child: _SparkCard(holding: h, compact: compact),
-                ),
-              );
-            }).toList(),
-          ),
+          // 2x2 공간 고정: GridView 대신 직접 레이아웃
+          _buildGrid(),
         ],
       ),
     );
   }
+
+  Widget _buildGrid() {
+    // 최대 4개, 2열 고정
+    // 공간은 항상 2x2 기준으로 확보
+    // 슬롯은 있는 것만 (빈 위젯 없음)
+    final rows = <Widget>[];
+
+    for (int i = 0; i < cards.length; i += 2) {
+      final left  = cards[i];
+      final right = i + 1 < cards.length ? cards[i + 1] : null;
+
+      rows.add(
+        Padding(
+          padding: EdgeInsets.only(bottom: i + 2 < cards.length ? 6 : 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _HoldingCardSlot(
+                  card:        left,
+                  isTriggered: triggeredCardIds.contains(left.cardId),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: right != null
+                    ? _HoldingCardSlot(
+                        card:        right,
+                        isTriggered: triggeredCardIds.contains(right.cardId),
+                      )
+                    // 오른쪽 슬롯 없을 때: 공간만 차지 (투명)
+                    : const SizedBox.shrink(),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Column(children: rows);
+  }
 }
 
-class _SparkCard extends StatelessWidget {
-  final HoldingInfo holding;
-  final bool compact;
+// =============================================
+// 개별 슬롯 (발동 애니메이션 포함)
+// =============================================
+class _HoldingCardSlot extends StatefulWidget {
+  final HoldingCardInfo card;
+  final bool isTriggered;
 
-  const _SparkCard({required this.holding, this.compact = false});
+  const _HoldingCardSlot({
+    required this.card,
+    this.isTriggered = false,
+  });
+
+  @override
+  State<_HoldingCardSlot> createState() => _HoldingCardSlotState();
+}
+
+class _HoldingCardSlotState extends State<_HoldingCardSlot>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnim;
+  late Animation<double> _borderAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+
+    // 스케일: 1.0 → 1.08 → 1.0
+    _scaleAnim = TweenSequence([
+      TweenSequenceItem(
+          tween: Tween(begin: 1.0, end: 1.08)
+              .chain(CurveTween(curve: Curves.easeOut)),
+          weight: 40),
+      TweenSequenceItem(
+          tween: Tween(begin: 1.08, end: 1.0)
+              .chain(CurveTween(curve: Curves.elasticOut)),
+          weight: 60),
+    ]).animate(_controller);
+
+    // 아웃라인 투명도: 0 → 1 → 0
+    _borderAnim = TweenSequence([
+      TweenSequenceItem(
+          tween: Tween(begin: 0.0, end: 1.0)
+              .chain(CurveTween(curve: Curves.easeOut)),
+          weight: 30),
+      TweenSequenceItem(
+          tween: Tween(begin: 1.0, end: 0.0)
+              .chain(CurveTween(curve: Curves.easeIn)),
+          weight: 70),
+    ]).animate(_controller);
+
+    if (widget.isTriggered) {
+      _controller.forward();
+    }
+  }
+
+  @override
+  void didUpdateWidget(_HoldingCardSlot old) {
+    super.didUpdateWidget(old);
+    // 새로 발동됐을 때 애니메이션 재실행
+    if (widget.isTriggered && !old.isTriggered) {
+      _controller.forward(from: 0);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final isPos  = holding.currentChangeRate >= 0;
+    final isPos  = widget.card.currentChangeRate >= 0;
     final color  = isPos ? const Color(0xFFE03131) : const Color(0xFF1971C2);
 
-    return Container(
-      padding: EdgeInsets.all(compact ? 5 : 7),
-      decoration: BoxDecoration(
-        color: holding.isNew
-            ? const Color(0xFFF8F7FF)
-            : const Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: holding.isNew
-              ? const Color(0xFF534AB7)
-              : const Color(0xFFEEEEEE),
-          width: holding.isNew ? 1.0 : 0.5,
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Transform.scale(
+          scale: _scaleAnim.value,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8F9FA),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: widget.isTriggered
+                    ? const Color(0xFFFFB800)
+                        .withValues(alpha: _borderAnim.value)
+                    : const Color(0xFFEEEEEE),
+                width: widget.isTriggered ? 2 : 0.5,
+              ),
+            ),
+            child: child,
+          ),
+        );
+      },
+      child: Row(
         children: [
-          // 티커
-          Text(
-            holding.ticker.replaceAll('^', ''),
-            style: TextStyle(
-              fontSize: compact ? 9 : 10,
-              fontWeight: FontWeight.w600,
-              color: holding.isNew
-                  ? const Color(0xFF534AB7)
-                  : const Color(0xFF111111),
+          Text(widget.card.emoji,
+              style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 5),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.card.ticker.replaceAll('^', ''),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF111111),
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
             ),
-            overflow: TextOverflow.ellipsis,
           ),
-
-          // 이름: 1~3개일 때만
-          if (!compact) ...[
-            const SizedBox(height: 1),
-            Text(
-              holding.cardName,
-              style: const TextStyle(fontSize: 8, color: Color(0xFF6B7684)),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ],
-
-          // 스파크라인
-          const SizedBox(height: 4),
-          SizedBox(
-            height: compact ? 14 : 18,
-            child: holding.recentChanges.length >= 2
-                ? CustomPaint(
-                    painter: _SparklinePainter(
-                      values: holding.recentChanges,
-                      color: color,
-                    ),
-                    size: Size.infinite,
-                  )
-                : const SizedBox.shrink(),
-          ),
-
-          // 등락률
-          const SizedBox(height: 2),
           Text(
-            '${isPos ? '+' : ''}${holding.currentChangeRate.toStringAsFixed(1)}%',
+            '${isPos ? '+' : ''}${widget.card.currentChangeRate.toStringAsFixed(1)}%',
             style: TextStyle(
-              fontSize: compact ? 7 : 8,
+              fontSize: 10,
               fontWeight: FontWeight.w600,
               color: color,
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-// =============================================
-// 카드 선택 라운드 보유종목 위젯 (2×2 그리드)
-// 차트 없음, 빈 슬롯 표시, 4칸 고정
-// =============================================
-class HoldingsMiniGrid extends StatelessWidget {
-  final List<HoldingInfo> holdings;
-
-  const HoldingsMiniGrid({super.key, required this.holdings});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEEEEEE), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '보유 종목 (${holdings.length})',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6B7684),
-            ),
-          ),
-          const SizedBox(height: 8),
-          GridView.count(
-            crossAxisCount: 2,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            crossAxisSpacing: 6,
-            mainAxisSpacing: 6,
-            childAspectRatio: 3.8,
-            children: [
-              ...holdings.map((h) => _MiniCard(holding: h)),
-              // 빈 슬롯 채우기 (총 4칸)
-              ...List.generate(
-                (4 - holdings.length).clamp(0, 4),
-                (_) => const _EmptySlot(),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MiniCard extends StatelessWidget {
-  final HoldingInfo holding;
-
-  const _MiniCard({required this.holding});
-
-  @override
-  Widget build(BuildContext context) {
-    final isPos = holding.currentChangeRate >= 0;
-    final color = isPos ? const Color(0xFFE03131) : const Color(0xFF1971C2);
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: holding.isNew
-            ? const Color(0xFFF8F7FF)
-            : const Color(0xFFF8F9FA),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: holding.isNew
-              ? const Color(0xFF534AB7)
-              : const Color(0xFFEEEEEE),
-          width: holding.isNew ? 1.0 : 0.5,
-        ),
-      ),
-      child: Row(
-        children: [
-          Text(holding.emoji, style: const TextStyle(fontSize: 12)),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(
-              holding.ticker.replaceAll('^', ''),
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: FontWeight.w600,
-                color: holding.isNew
-                    ? const Color(0xFF534AB7)
-                    : const Color(0xFF111111),
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          Text(
-            '${isPos ? '+' : ''}${holding.currentChangeRate.toStringAsFixed(1)}%',
-            style: TextStyle(
-                fontSize: 9, fontWeight: FontWeight.w600, color: color),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptySlot extends StatelessWidget {
-  const _EmptySlot();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: const Color(0xFFEEEEEE),
-          width: 0.5,
-        ),
       ),
     );
   }

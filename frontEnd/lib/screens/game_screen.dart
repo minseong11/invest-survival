@@ -12,7 +12,6 @@ import '../widgets/stock_chart.dart';
 import '../widgets/holdings_widget.dart';
 import 'game_result_screen.dart';
 
-// AI 추천 버튼 상태
 enum AiState { idle, loading, done, error }
 
 class GameScreen extends StatefulWidget {
@@ -23,7 +22,7 @@ class GameScreen extends StatefulWidget {
   State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> {
+class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   final GameService _gameService = GameService();
 
   late GameSession _session;
@@ -34,20 +33,29 @@ class _GameScreenState extends State<GameScreen> {
 
   List<int> _currentCardOptions = [];
 
-  // 이미 선택한 카드 누적 (V2 alreadyCards 파라미터용)
+  // 선택한 카드 누적 (보유카드 + V2 alreadyCards용)
   final List<int> _selectedCardIds = [];
   int? _lastAddedCardId;
 
-  // V1.5: 게임 시작 후 백그라운드 로딩
-  Map<int, int> _v1RecommendedCards = {}; // {라운드: cardId}
+  // 이번 라운드 발동 카드 (애니메이션용)
+  List<int> _triggeredCardIds = [];
 
-  // V2: AI 추천받기 버튼 눌렀을 때만 동작
+  // V1.5: 백그라운드 로딩
+  Map<int, int> _v1RecommendedCards = {};
+
+  // V2: 버튼 눌렀을 때만
   AiState          _aiState             = AiState.idle;
   int?             _v2RecommendedCardId;
-  Map<int, double> _contributions       = {}; // {cardId: contribution}
+  Map<int, double> _contributions       = {};
   bool             _aiRequested         = false;
 
   Timer? _autoTimer;
+
+  // 총 자산 카운트업 애니메이션
+  late AnimationController _assetAnimController;
+  late Animation<double>   _assetAnim;
+  double _prevAsset = 0;
+  double _targetAsset = 0;
 
   // ── Getters ────────────────────────────────
   RoundData get _currentRound {
@@ -75,17 +83,17 @@ class _GameScreenState extends State<GameScreen> {
     return _currentRoundIndex >= _session.rounds.length - 1;
   }
 
-  // V2 사용 가능한 라운드: 25·50만 (75 역상관 제외)
+  // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
 
-  // AI 추천 카드 ID (V2 우선, 없으면 V1.5)
+  // AI 추천 카드 ID
   int? get _aiRecommendedCardId {
     if (!_aiRequested || _aiState != AiState.done) return null;
     return _v2RecommendedCardId ?? _v1RecommendedCards[_currentRound1];
   }
 
-  // 보유 종목 데이터
-  List<HoldingInfo> get _holdings => extractHoldings(
+  // 보유카드 데이터
+  List<HoldingCardInfo> get _holdingCards => extractHoldingCards(
         selectedCardIds:   _selectedCardIds,
         rounds:            _session.rounds,
         currentRoundIndex: _currentRoundIndex,
@@ -100,12 +108,28 @@ class _GameScreenState extends State<GameScreen> {
     super.initState();
     _session            = widget.session;
     _currentCardOptions = _session.firstCardOptions;
+
+    final initAsset = _session.initialAsset.toDouble();
+    _prevAsset   = initAsset;
+    _targetAsset = initAsset;
+
+    _assetAnimController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 600),
+    );
+    _assetAnim = Tween<double>(begin: initAsset, end: initAsset)
+        .animate(CurvedAnimation(
+          parent: _assetAnimController,
+          curve: Curves.easeOut,
+        ));
+
     _loadV1InBackground();
   }
 
   @override
   void dispose() {
     _autoTimer?.cancel();
+    _assetAnimController.dispose();
     super.dispose();
   }
 
@@ -122,16 +146,16 @@ class _GameScreenState extends State<GameScreen> {
           _v1RecommendedCards[rec.round] = rec.cardId;
         }
       });
-    }).catchError((_) {
-      // V1.5 실패해도 게임 진행 가능
-    });
+    }).catchError((_) {});
   }
 
   // =============================================
-  // V2 AI 추천 (버튼 클릭 시)
+  // V2 AI 추천 (버튼 클릭 시, 25·50라운드만)
   // =============================================
   Future<void> _requestAiRecommendation() async {
     if (_aiState == AiState.loading) return;
+    // 1·75라운드에서는 버튼 자체가 없음 → 호출 안 됨
+
     setState(() {
       _aiRequested         = true;
       _aiState             = AiState.loading;
@@ -140,29 +164,22 @@ class _GameScreenState extends State<GameScreen> {
     });
 
     try {
-      if (_canUseV2) {
-        final result = await _gameService.getV2Recommendation(
-          sessionId:      _session.sessionId,
-          currentRound:   _currentRound1,
-          alreadyCards:   List.from(_selectedCardIds),
-          candidateCards: List.from(_currentCardOptions),
-        );
-        if (!mounted) return;
-        final contribs = <int, double>{};
-        for (final r in result.rankings) {
-          contribs[r.cardId] = r.contribution;
-        }
-        setState(() {
-          _v2RecommendedCardId = result.recommendedCardId;
-          _contributions       = contribs;
-          _aiState             = AiState.done;
-        });
-      } else {
-        // 1·75라운드: V1.5 사전 추천 사용
-        await Future.delayed(const Duration(milliseconds: 300));
-        if (!mounted) return;
-        setState(() => _aiState = AiState.done);
+      final result = await _gameService.getV2Recommendation(
+        sessionId:      _session.sessionId,
+        currentRound:   _currentRound1,
+        alreadyCards:   List.from(_selectedCardIds),
+        candidateCards: List.from(_currentCardOptions),
+      );
+      if (!mounted) return;
+      final contribs = <int, double>{};
+      for (final r in result.rankings) {
+        contribs[r.cardId] = r.contribution;
       }
+      setState(() {
+        _v2RecommendedCardId = result.recommendedCardId;
+        _contributions       = contribs;
+        _aiState             = AiState.done;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() => _aiState = AiState.error);
@@ -190,12 +207,18 @@ class _GameScreenState extends State<GameScreen> {
         if (!_isLastRound) {
           setState(() {
             _currentRoundIndex++;
-            _cardSelected = false;
+            _cardSelected    = false;
+            _triggeredCardIds = [];
             _resetAiState();
           });
         }
       } else {
-        setState(() => _currentRoundIndex++);
+        setState(() {
+          _currentRoundIndex++;
+          _triggeredCardIds =
+              _session.rounds[_currentRoundIndex].triggeredCards;
+        });
+        _animateAsset();
       }
     });
   }
@@ -211,23 +234,41 @@ class _GameScreenState extends State<GameScreen> {
     final next = _currentRoundIndex + 2;
     setState(() {
       _currentRoundIndex++;
+      _triggeredCardIds =
+          _session.rounds[_currentRoundIndex].triggeredCards;
       if (_session.isCardSelectRound(next)) {
-        _cardSelected = false;
+        _cardSelected    = false;
+        _triggeredCardIds = [];
         _resetAiState();
       }
     });
+    _animateAsset();
+  }
+
+  void _animateAsset() {
+    final round      = _currentRound;
+    final newAsset   = round.roundAsset ?? _session.initialAsset.toDouble();
+    final fromAsset  = _assetAnim.value;
+
+    _assetAnim = Tween<double>(begin: fromAsset, end: newAsset)
+        .animate(CurvedAnimation(
+          parent: _assetAnimController,
+          curve: Curves.easeOut,
+        ));
+    _assetAnimController.forward(from: 0);
   }
 
   void _goToResult() {
     _stopAutoPlay();
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (_) => GameResultScreen(session: _session)),
+      MaterialPageRoute(
+          builder: (_) => GameResultScreen(session: _session)),
     );
   }
 
   // =============================================
-  // 카드 선택 API
+  // 카드 선택
   // =============================================
   Future<void> _onCardSelected(int cardId) async {
     setState(() => _isSubmitting = true);
@@ -289,7 +330,8 @@ class _GameScreenState extends State<GameScreen> {
       if (!_selectedCardIds.contains(selectedCardId)) {
         _selectedCardIds.add(selectedCardId);
       }
-      _lastAddedCardId = selectedCardId;
+      _lastAddedCardId  = selectedCardId;
+      _triggeredCardIds = [];
       _resetAiState();
     });
   }
@@ -305,6 +347,7 @@ class _GameScreenState extends State<GameScreen> {
       _currentCardOptions = mockSession.firstCardOptions;
       _selectedCardIds.clear();
       _lastAddedCardId    = null;
+      _triggeredCardIds   = [];
       _resetAiState();
     });
   }
@@ -328,24 +371,30 @@ class _GameScreenState extends State<GameScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    // 차트 (고정 비율)
                     _buildChartArea(),
                     const SizedBox(height: 8),
+
+                    // 라운드 정보 (내 수익률 | 총 자산 박스)
                     _buildRoundInfo(),
                     const SizedBox(height: 8),
-                    if (_showCard) ...[
-                      if (_selectedCardIds.isNotEmpty) ...[
-                        HoldingsMiniGrid(holdings: _holdings),
-                        const SizedBox(height: 8),
-                      ],
-                      _buildCardSelector(),
-                    ] else ...[
-                      if (_selectedCardIds.isNotEmpty) ...[
-                        HoldingsGameWidget(holdings: _holdings),
-                        const SizedBox(height: 8),
-                      ],
-                      _buildControls(),
+
+                    // 보유카드 (항상 동일한 위젯)
+                    if (_selectedCardIds.isNotEmpty) ...[
+                      HoldingCardsWidget(
+                        cards:           _holdingCards,
+                        triggeredCardIds: _triggeredCardIds,
+                      ),
+                      const SizedBox(height: 8),
                     ],
+
+                    // 카드 선택 or 컨트롤
+                    if (_showCard)
+                      _buildCardSelector()
+                    else
+                      _buildControls(),
                   ],
                 ),
               ),
@@ -376,7 +425,8 @@ class _GameScreenState extends State<GameScreen> {
                     color: Color(0xFF111111))),
           ),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: const Color(0xFFEEEDFE),
               borderRadius: BorderRadius.circular(20),
@@ -451,17 +501,18 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  // ── 차트 (수익률%) ─────────────────────────
+  // ── 차트 ──────────────────────────────────
   Widget _buildChartArea() {
-    return Expanded(
-      flex: 7,
+    return SizedBox(
+      height: 160,
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(8, 12, 12, 8),
+        padding: const EdgeInsets.fromLTRB(8, 8, 12, 6),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: const Color(0xFFEEEEEE), width: 1),
+          border: Border.all(
+              color: const Color(0xFFEEEEEE), width: 1),
         ),
         child: StockChart(
           rounds:       _chartData,
@@ -471,158 +522,93 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  // ── 라운드 정보 ────────────────────────────
+  // ── 라운드 정보 (개선안 B - 박스 분리) ────────
   Widget _buildRoundInfo() {
     final round      = _currentRound;
-    final asset      = round.roundAsset ?? _session.initialAsset.toDouble();
     final returnRate = round.returnRate;
     final isPos      = (returnRate ?? 0) >= 0;
 
-    // 시장 대비 우위 계산
-    double? spxReturnRate;
-    final spxBase = _session.rounds.isNotEmpty
-        ? _session.rounds.first.getPrice('^SPX')?.close
-        : null;
-    final spxNow = round.getPrice('^SPX')?.close;
-    if (spxBase != null && spxNow != null && spxBase > 0) {
-      spxReturnRate = (spxNow - spxBase) / spxBase * 100;
-    }
-    final beatMarket = returnRate != null &&
-        spxReturnRate != null &&
-        returnRate > spxReturnRate;
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFEEEEEE), width: 1),
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(round.date,
-                        style: const TextStyle(
-                            fontSize: 12, color: Color(0xFF6B7684))),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: round.priceData.map((price) {
-                        final pos = price.changeRate >= 0;
-                        return Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8, height: 8,
-                              decoration: BoxDecoration(
-                                color: _tickerColor(price.ticker),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              '${price.ticker} ${pos ? '+' : ''}${price.changeRate.toStringAsFixed(2)}%',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: pos
-                                      ? const Color(0xFFE03131)
-                                      : const Color(0xFF1971C2)),
-                            ),
-                          ],
-                        );
-                      }).toList(),
-                    ),
-                  ],
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 내 수익률 박스
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: const Color(0xFFEEEEEE), width: 1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '내 수익률',
+                  style: TextStyle(
+                      fontSize: 10, color: Color(0xFF6B7684)),
                 ),
-              ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text('${_formatNumber(asset)}원',
-                      style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF111111))),
-                  if (returnRate != null) ...[
-                    const SizedBox(height: 2),
-                    Text(
-                      '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%',
-                      style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: isPos
-                              ? const Color(0xFFE03131)
-                              : const Color(0xFF1971C2)),
-                    ),
-                  ],
-                ],
-              ),
-            ],
+                const SizedBox(height: 4),
+                Text(
+                  returnRate != null
+                      ? '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%'
+                      : '0.00%',
+                  style: TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      color: isPos
+                          ? const Color(0xFFE03131)
+                          : const Color(0xFF1971C2)),
+                ),
+              ],
+            ),
           ),
-
-          // 시장 대비 배너
-          if (returnRate != null && spxReturnRate != null) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: beatMarket
-                    ? const Color(0xFFE6F9F0)
-                    : const Color(0xFFFFF0F0),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                beatMarket
-                    ? '▲ 시장 대비 +${(returnRate - spxReturnRate).toStringAsFixed(1)}%p 우위'
-                    : '▼ 시장 대비 ${(returnRate - spxReturnRate).toStringAsFixed(1)}%p 뒤처짐',
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: beatMarket
-                        ? const Color(0xFF0F6E56)
-                        : const Color(0xFFE03131)),
-                textAlign: TextAlign.center,
-              ),
+        ),
+        const SizedBox(width: 8),
+        // 총 자산 박스
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                  color: const Color(0xFFEEEEEE), width: 1),
             ),
-          ],
-
-          // 발동 카드
-          if (round.triggeredCards.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEEEDFE),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Wrap(
-                spacing: 6,
-                children: round.triggeredCards.map((id) {
-                  final card = CardInfo.fromId(id);
-                  if (card == null) return const SizedBox.shrink();
-                  return Text('${card.emoji} ${card.name} 발동',
-                      style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: Color(0xFF3C3489)));
-                }).toList(),
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  '총 자산',
+                  style: TextStyle(
+                      fontSize: 10, color: Color(0xFF6B7684)),
+                ),
+                const SizedBox(height: 4),
+                AnimatedBuilder(
+                  animation: _assetAnim,
+                  builder: (_, __) => Text(
+                    '${_formatNumber(_assetAnim.value)}원',
+                    style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF111111)),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(round.date,
+                    style: const TextStyle(
+                        fontSize: 10,
+                        color: Color(0xFF6B7684))),
+              ],
             ),
-          ],
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -647,7 +633,8 @@ class _GameScreenState extends State<GameScreen> {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF6B7684))),
               const Spacer(),
-              _buildAiButton(),
+              // AI 버튼: 25·50라운드만 표시
+              if (_canUseV2) _buildAiButton(),
             ],
           ),
 
@@ -672,19 +659,23 @@ class _GameScreenState extends State<GameScreen> {
 
           const SizedBox(height: 10),
 
-          Row(
-            children: _currentCardOptions.asMap().entries.map((e) {
-              final cardId = e.value;
-              final last   = e.key == _currentCardOptions.length - 1;
-              final card   = CardInfo.fromId(cardId);
-              if (card == null) return const SizedBox.shrink();
-              return Expanded(
-                child: Padding(
-                  padding: EdgeInsets.only(right: last ? 0 : 8),
-                  child: _buildCardItem(card),
-                ),
-              );
-            }).toList(),
+          // 카드 3개: 균등 패딩
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: List.generate(_currentCardOptions.length, (i) {
+                final cardId = _currentCardOptions[i];
+                final card   = CardInfo.fromId(cardId);
+                if (card == null) return const SizedBox.shrink();
+                final isLast = i == _currentCardOptions.length - 1;
+                return Expanded(
+                  child: Padding(
+                    padding: EdgeInsets.only(right: isLast ? 0 : 8),
+                    child: _buildCardItem(card),
+                  ),
+                );
+              }),
+            ),
           ),
         ],
       ),
@@ -795,81 +786,80 @@ class _GameScreenState extends State<GameScreen> {
 
   // ── 카드 아이템 ────────────────────────────
   Widget _buildCardItem(CardInfo card) {
-    final aiPick       = _aiRecommendedCardId == card.id;
+    final aiPick      = _aiRecommendedCardId == card.id;
     final contribution = _contributions[card.id];
     final showContrib  =
         _aiRequested && _aiState == AiState.done && contribution != null;
 
     return GestureDetector(
       onTap: _isSubmitting ? null : () => _onCardSelected(card.id),
-      child: Stack(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: aiPick
-                  ? const Color(0xFFDEDCFD)
-                  : const Color(0xFFEEEDFE),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: aiPick
-                    ? const Color(0xFF3C3489)
-                    : const Color(0xFF534AB7),
-                width: aiPick ? 2 : 1,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(card.emoji,
-                    style: const TextStyle(fontSize: 22)),
-                const SizedBox(height: 6),
-                Text(card.name,
-                    style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF3C3489))),
-                const SizedBox(height: 4),
-                Text(card.description,
-                    style: const TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFF534AB7),
-                        height: 1.4)),
-                // 기여도: 버튼 눌러서 완료됐을 때만
-                if (showContrib) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(2)}%',
-                    style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: contribution >= 0
-                            ? const Color(0xFF0F6E56)
-                            : const Color(0xFF993C1D)),
-                  ),
-                ],
-              ],
-            ),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEEEDFE),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: const Color(0xFF534AB7),
+            width: 1,
           ),
-          // AI 추천 뱃지
-          if (aiPick)
-            Positioned(
-              top: 4, right: 4,
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF3C3489),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text('AI 추천',
-                    style: TextStyle(
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white)),
-              ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 상단 영역: 뱃지 있든 없든 동일 높이 확보
+            SizedBox(
+              height: 20,
+              child: aiPick
+                  ? Align(
+                      alignment: Alignment.centerRight,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFE03131),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text('AI 추천',
+                            style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white)),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
-        ],
+            const SizedBox(height: 2),
+
+            Text(card.emoji,
+                style: const TextStyle(fontSize: 22)),
+            const SizedBox(height: 6),
+            Text(card.name,
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF3C3489))),
+            const SizedBox(height: 4),
+            Text(card.description,
+                style: const TextStyle(
+                    fontSize: 10,
+                    color: Color(0xFF534AB7),
+                    height: 1.4)),
+
+            // 기여도: 추천 완료 후에만
+            if (showContrib) ...[
+              const SizedBox(height: 6),
+              Text(
+                '${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(2)}%',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: contribution >= 0
+                        ? const Color(0xFF0F6E56)
+                        : const Color(0xFF993C1D)),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -935,18 +925,6 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   // ── 유틸 ──────────────────────────────────
-  Color _tickerColor(String ticker) {
-    const colors = {
-      '^SPX': Color(0xFF1971C2),
-      '^NDX': Color(0xFF7048E8),
-      'GLD':  Color(0xFFE67700),
-      'USO':  Color(0xFF2F9E44),
-      'AAPL': Color(0xFF868E96),
-      'TLT':  Color(0xFFE64980),
-    };
-    return colors[ticker] ?? const Color(0xFF6B7684);
-  }
-
   String _formatNumber(double value) {
     return value
         .toStringAsFixed(0)

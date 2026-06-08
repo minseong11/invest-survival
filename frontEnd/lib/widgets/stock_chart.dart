@@ -2,7 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../models/round_data.dart';
 
-class StockChart extends StatelessWidget {
+class StockChart extends StatefulWidget {
   final List<RoundData> rounds;
   final double initialAsset;
 
@@ -12,38 +12,42 @@ class StockChart extends StatelessWidget {
     this.initialAsset = 10000000,
   });
 
-  // SPX 첫날 종가 (정규화 기준점)
+  @override
+  State<StockChart> createState() => _StockChartState();
+}
+
+class _StockChartState extends State<StockChart> {
+  int? _touchedIndex;
+
   double? get _spxBase {
-    for (final r in rounds) {
+    for (final r in widget.rounds) {
       final p = r.getPrice('^SPX');
       if (p != null && p.close > 0) return p.close;
     }
     return null;
   }
 
-  // S&P500 수익률(%) FlSpot 리스트
   List<FlSpot> get _spxSpots {
     final base = _spxBase;
     if (base == null) return [];
     final spots = <FlSpot>[];
-    for (int i = 0; i < rounds.length; i++) {
-      final p = rounds[i].getPrice('^SPX');
+    for (int i = 0; i < widget.rounds.length; i++) {
+      final p = widget.rounds[i].getPrice('^SPX');
       if (p != null) {
-        final pct = (p.close - base) / base * 100;
-        spots.add(FlSpot(i.toDouble(), pct));
+        spots.add(FlSpot(i.toDouble(), (p.close - base) / base * 100));
       }
     }
     return spots;
   }
 
-  // 내 자산 수익률(%) FlSpot 리스트
   List<FlSpot> get _assetSpots {
     final spots = <FlSpot>[];
-    for (int i = 0; i < rounds.length; i++) {
-      final asset = rounds[i].roundAsset;
+    for (int i = 0; i < widget.rounds.length; i++) {
+      final asset = widget.rounds[i].roundAsset;
       if (asset != null) {
-        final pct = (asset - initialAsset) / initialAsset * 100;
-        spots.add(FlSpot(i.toDouble(), pct));
+        spots.add(FlSpot(
+            i.toDouble(),
+            (asset - widget.initialAsset) / widget.initialAsset * 100));
       }
     }
     return spots;
@@ -54,7 +58,6 @@ class StockChart extends StatelessWidget {
     for (final s in [..._spxSpots, ..._assetSpots]) {
       if (s.y < min) min = s.y;
     }
-    // 여유분 10% + 최소 -2%
     return ((min * 1.15) - 2).floorToDouble();
   }
 
@@ -68,7 +71,7 @@ class StockChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (rounds.isEmpty) {
+    if (widget.rounds.isEmpty) {
       return const Center(
         child: Text('데이터 없음',
             style: TextStyle(color: Color(0xFF6B7684))),
@@ -83,57 +86,6 @@ class StockChart extends StatelessWidget {
     final range      = (maxY - minY).abs();
     final interval   = range > 0 ? (range / 4) : 2.0;
 
-    final lineBars = <LineChartBarData>[
-      // S&P 500 (파랑)
-      if (spxSpots.isNotEmpty)
-        LineChartBarData(
-          spots: spxSpots,
-          color: const Color(0xFF1971C2),
-          barWidth: 1.5,
-          isCurved: true,
-          curveSmoothness: 0.3,
-          dotData: FlDotData(
-            show: true,
-            getDotPainter: (spot, _, __, idx) {
-              final last = idx == spxSpots.length - 1;
-              return FlDotCirclePainter(
-                radius: last ? 3 : 0,
-                color: const Color(0xFF1971C2),
-                strokeWidth: last ? 2 : 0,
-                strokeColor: Colors.white,
-              );
-            },
-          ),
-          belowBarData: BarAreaData(show: false),
-        ),
-
-      // 내 자산 (검정)
-      if (hasAsset)
-        LineChartBarData(
-          spots: assetSpots,
-          color: const Color(0xFF111111),
-          barWidth: 2.5,
-          isCurved: true,
-          curveSmoothness: 0.3,
-          dotData: FlDotData(
-            show: true,
-            getDotPainter: (spot, _, __, idx) {
-              final last = idx == assetSpots.length - 1;
-              return FlDotCirclePainter(
-                radius: last ? 4 : 0,
-                color: const Color(0xFF111111),
-                strokeWidth: last ? 2 : 0,
-                strokeColor: Colors.white,
-              );
-            },
-          ),
-          belowBarData: BarAreaData(
-            show: true,
-            color: const Color(0xFF111111).withValues(alpha: 0.04),
-          ),
-        ),
-    ];
-
     return Column(
       children: [
         // 범례
@@ -142,22 +94,113 @@ class StockChart extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              _legendDot(const Color(0xFF1971C2), 'S&P 500'),
+              _legendItemDash(const Color(0xFF74B0FF), 'S&P 500'),
               const SizedBox(width: 12),
-              if (hasAsset) _legendDot(const Color(0xFF111111), '내 자산'),
+              if (hasAsset)
+                _legendItem(const Color(0xFF3C3489), '내 자산'),
             ],
           ),
         ),
 
-        // 차트
         Expanded(
           child: LineChart(
             LineChartData(
               minY: minY,
               maxY: maxY,
               minX: 0,
-              maxX: (rounds.length - 1).toDouble(),
-              lineBarsData: lineBars,
+              maxX: (widget.rounds.length - 1).toDouble(),
+              lineTouchData: LineTouchData(
+                enabled: true,
+                touchCallback: (event, response) {
+                  setState(() {
+                    if (response?.lineBarSpots != null &&
+                        response!.lineBarSpots!.isNotEmpty) {
+                      _touchedIndex =
+                          response.lineBarSpots!.first.spotIndex;
+                    } else {
+                      _touchedIndex = null;
+                    }
+                  });
+                },
+                touchTooltipData: LineTouchTooltipData(
+                  getTooltipColor: (_) => const Color(0xFF1A1A2E),
+                  getTooltipItems: (spots) {
+                    return spots.map((spot) {
+                      final label = spot.barIndex == 0
+                          ? 'S&P500'
+                          : '내 자산';
+                      final val = spot.y;
+                      return LineTooltipItem(
+                        '$label\n${val >= 0 ? '+' : ''}${val.toStringAsFixed(2)}%',
+                        TextStyle(
+                          color: spot.barIndex == 0
+                              ? const Color(0xFF74B0FF)
+                              : Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      );
+                    }).toList();
+                  },
+                ),
+              ),
+              lineBarsData: [
+                // S&P 500
+                if (spxSpots.isNotEmpty)
+                  LineChartBarData(
+                    spots: spxSpots,
+                    color: const Color(0xFF74B0FF),
+                    barWidth: 1.5,
+                    isCurved: true,
+                    curveSmoothness: 0.3,
+                    dashArray: [6, 4],
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, _, __, idx) {
+                        final last = idx == spxSpots.length - 1;
+                        return FlDotCirclePainter(
+                          radius: last ? 2.5 : 0,
+                          color: const Color(0xFF74B0FF),
+                          strokeWidth: last ? 1.5 : 0,
+                          strokeColor: Colors.white,
+                        );
+                      },
+                    ),
+                    belowBarData: BarAreaData(show: false),
+                  ),
+                // 내 자산
+                if (hasAsset)
+                  LineChartBarData(
+                    spots: assetSpots,
+                    color: const Color(0xFF3C3489),
+                    barWidth: 2.5,
+                    isCurved: true,
+                    curveSmoothness: 0.3,
+                    dotData: FlDotData(
+                      show: true,
+                      getDotPainter: (spot, _, __, idx) {
+                        final last = idx == assetSpots.length - 1;
+                        return FlDotCirclePainter(
+                          radius: last ? 4 : 0,
+                          color: const Color(0xFF3C3489),
+                          strokeWidth: last ? 2 : 0,
+                          strokeColor: Colors.white,
+                        );
+                      },
+                    ),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          const Color(0xFF3C3489).withValues(alpha: 0.18),
+                          const Color(0xFF3C3489).withValues(alpha: 0.02),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
@@ -169,14 +212,6 @@ class StockChart extends StatelessWidget {
                   strokeWidth: value.abs() < 0.01 ? 1.0 : 0.5,
                 ),
               ),
-              borderData: FlBorderData(
-                show: true,
-                border: const Border(
-                  bottom: BorderSide(color: Color(0xFFEEEEEE), width: 1),
-                  left:   BorderSide(color: Color(0xFFEEEEEE), width: 1),
-                ),
-              ),
-              // 0% 기준 점선
               extraLinesData: ExtraLinesData(
                 horizontalLines: [
                   HorizontalLine(
@@ -187,8 +222,14 @@ class StockChart extends StatelessWidget {
                   ),
                 ],
               ),
+              borderData: FlBorderData(
+                show: true,
+                border: const Border(
+                  bottom: BorderSide(color: Color(0xFFEEEEEE), width: 1),
+                  left:   BorderSide(color: Color(0xFFEEEEEE), width: 1),
+                ),
+              ),
               titlesData: FlTitlesData(
-                // Y축: 수익률 %
                 leftTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
@@ -199,9 +240,7 @@ class StockChart extends StatelessWidget {
                       child: Text(
                         '${value >= 0 ? '+' : ''}${value.toStringAsFixed(0)}%',
                         style: const TextStyle(
-                          fontSize: 8,
-                          color: Color(0xFF6B7684),
-                        ),
+                            fontSize: 8, color: Color(0xFF6B7684)),
                         textAlign: TextAlign.right,
                       ),
                     ),
@@ -211,21 +250,20 @@ class StockChart extends StatelessWidget {
                     sideTitles: SideTitles(showTitles: false)),
                 topTitles: const AxisTitles(
                     sideTitles: SideTitles(showTitles: false)),
-                // X축: 날짜
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
                     reservedSize: 22,
-                    interval: (rounds.length / 4).ceilToDouble(),
+                    interval: (widget.rounds.length / 4).ceilToDouble(),
                     getTitlesWidget: (value, _) {
                       final idx = value.toInt();
-                      if (idx < 0 || idx >= rounds.length) {
+                      if (idx < 0 || idx >= widget.rounds.length) {
                         return const SizedBox.shrink();
                       }
-                      final parts = rounds[idx].date.split('-');
+                      final parts = widget.rounds[idx].date.split('-');
                       final label = parts.length >= 3
                           ? '${parts[1]}/${parts[2]}'
-                          : rounds[idx].date;
+                          : widget.rounds[idx].date;
                       return Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(label,
@@ -243,21 +281,62 @@ class StockChart extends StatelessWidget {
     );
   }
 
-  Widget _legendDot(Color color, String label) {
+  Widget _legendItem(Color color, String label) {
     return Row(
       children: [
         Container(
           width: 12,
           height: 2.5,
           decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(1),
+              color: color, borderRadius: BorderRadius.circular(1)),
+        ),
+        const SizedBox(width: 3),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 9, color: Color(0xFF6B7684))),
+      ],
+    );
+  }
+
+  // 점선 범례 (S&P500용)
+  Widget _legendItemDash(Color color, String label) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 14,
+          height: 8,
+          child: CustomPaint(
+            painter: _DashPainter(color: color),
           ),
         ),
         const SizedBox(width: 3),
         Text(label,
-            style: const TextStyle(fontSize: 9, color: Color(0xFF6B7684))),
+            style: const TextStyle(
+                fontSize: 9, color: Color(0xFF6B7684))),
       ],
     );
   }
+}
+
+// 점선 범례 페인터
+class _DashPainter extends CustomPainter {
+  final Color color;
+  _DashPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1.5
+      ..strokeCap = StrokeCap.round;
+    double x = 0;
+    while (x < size.width) {
+      canvas.drawLine(Offset(x, size.height / 2),
+          Offset((x + 4).clamp(0, size.width), size.height / 2), paint);
+      x += 7;
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashPainter old) => old.color != color;
 }
