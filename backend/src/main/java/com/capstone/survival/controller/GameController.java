@@ -50,12 +50,35 @@ public class GameController {
     public ApiResponse<?> validateGame(@RequestBody Map<String, Object> request) {
         String startDate = (String) request.get("startDate");
 
-        // cardSelections: {"1": 1, "25": 2, "50": 3, "75": 4}
         @SuppressWarnings("unchecked")
         Map<String, Object> rawSelections = (Map<String, Object>) request.get("cardSelections");
         Map<Integer, Integer> cardSelections = new LinkedHashMap<>();
         rawSelections.forEach((k, v) -> cardSelections.put(Integer.parseInt(k), (Integer) v));
 
         return ApiResponse.ok(gameService.validateGame(startDate, cardSelections));
+    }
+
+    // POST /game/recommend/v1 — V1.5 사전 추천
+    @PostMapping("/recommend/v1")
+    public ApiResponse<?> recommendV1(@RequestBody Map<String, String> request) {
+        String sessionId = request.get("sessionId");
+        return ApiResponse.ok(gameService.recommendV1(sessionId));
+    }
+
+    // POST /game/recommend/v2 — V2 실시간 추천
+    @PostMapping("/recommend/v2")
+    public ApiResponse<?> recommendV2(@RequestBody Map<String, Object> request) {
+        String sessionId = (String) request.get("sessionId");
+        Integer currentRound = (Integer) request.get("currentRound");
+
+        @SuppressWarnings("unchecked")
+        List<Integer> alreadyCards = (List<Integer>) request.get("alreadyCards");
+
+        @SuppressWarnings("unchecked")
+        List<Integer> candidateCards = (List<Integer>) request.get("candidateCards");
+
+        return ApiResponse.ok(
+                gameService.recommendV2(sessionId, currentRound, alreadyCards, candidateCards)
+        );
     }
 }

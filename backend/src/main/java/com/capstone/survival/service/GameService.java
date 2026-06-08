@@ -9,7 +9,10 @@ import com.capstone.survival.repository.GameSessionRepository;
 import com.capstone.survival.repository.ScenarioRepository;
 import com.capstone.survival.repository.StockPriceRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.LocalDate;
 import java.util.*;
@@ -23,6 +26,10 @@ public class GameService {
     private final ScenarioRepository scenarioRepository;
     private final StockPriceRepository stockPriceRepository;
     private final CardRepository cardRepository;
+    private final RestTemplate restTemplate;
+
+    @Value("${ai.server.url:http://localhost:8000}")
+    private String aiServerUrl;
 
     private static final List<Integer> CARD_SELECT_ROUNDS = List.of(1, 25, 50, 75);
     private static final List<Integer> ALL_CARD_IDS = List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
@@ -78,6 +85,194 @@ public class GameService {
         response.put("rounds", List.of(firstRound));
 
         return response;
+    }
+
+    // =============================================
+    // V1.5 사전 추천
+    // =============================================
+    public Map<String, Object> recommendV1(String sessionId) {
+        GameSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다"));
+
+        // 100라운드 전체 SPX 지표 계산
+        Map<String, Double> indicators = calculateFullMarketIndicators(session);
+
+        // Python FastAPI 호출
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("spxReturn", indicators.get("spxReturn"));
+        requestBody.put("spxVolatility", indicators.get("spxVolatility"));
+        requestBody.put("spxMdd", indicators.get("spxMdd"));
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    aiServerUrl + "/ai/v1/recommend",
+                    HttpMethod.POST,
+                    entity,
+                    Map.class
+            );
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rawRecommendations =
+                    (List<Map<String, Object>>) response.getBody().get("recommendations");
+
+            // cardName 추가
+            List<Map<String, Object>> recommendations = new ArrayList<>();
+            for (Map<String, Object> item : rawRecommendations) {
+                Map<String, Object> enriched = new LinkedHashMap<>(item);
+                Integer cardId = (Integer) item.get("cardId");
+                cardRepository.findById(cardId).ifPresent(card ->
+                        enriched.put("cardName", card.getName())
+                );
+                recommendations.add(enriched);
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("recommendations", recommendations);
+            return result;
+
+        } catch (Exception e) {
+            throw new RuntimeException("AI 서버에 연결할 수 없습니다: " + e.getMessage());
+        }
+    }
+
+    // =============================================
+    // V2 실시간 추천
+    // =============================================
+    public Map<String, Object> recommendV2(String sessionId, Integer currentRound,
+                                           List<Integer> alreadyCards,
+                                           List<Integer> candidateCards) {
+        GameSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다"));
+
+        // 현재 라운드까지 so_far 지표 계산
+        Map<String, Double> indicators = calculateSoFarMarketIndicators(session, currentRound);
+
+        // Python FastAPI 호출
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("spxReturnSoFar", indicators.get("spxReturn"));
+        requestBody.put("spxVolatilitySoFar", indicators.get("spxVolatility"));
+        requestBody.put("spxMddSoFar", indicators.get("spxMdd"));
+        requestBody.put("currentRound", currentRound);
+        requestBody.put("alreadyCards", alreadyCards);
+        requestBody.put("candidateCards", candidateCards);
+
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    aiServerUrl + "/ai/v2/recommend",
+                    HttpMethod.POST,
+                    entity,
+                    Map.class
+            );
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = response.getBody();
+
+            // recommendedCardName 추가
+            Integer recommendedCardId = (Integer) body.get("recommendedCardId");
+            String recommendedCardName = cardRepository.findById(recommendedCardId)
+                    .map(Card::getName)
+                    .orElse("");
+
+            // rankings에 cardName 추가
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rawRankings = (List<Map<String, Object>>) body.get("rankings");
+            List<Map<String, Object>> rankings = new ArrayList<>();
+            for (Map<String, Object> item : rawRankings) {
+                Map<String, Object> enriched = new LinkedHashMap<>(item);
+                Integer cardId = (Integer) item.get("cardId");
+                cardRepository.findById(cardId).ifPresent(card ->
+                        enriched.put("cardName", card.getName())
+                );
+                rankings.add(enriched);
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("recommendedCardId", recommendedCardId);
+            result.put("recommendedCardName", recommendedCardName);
+            result.put("rankings", rankings);
+            return result;
+
+        } catch (Exception e) {
+            throw new RuntimeException("AI 서버에 연결할 수 없습니다: " + e.getMessage());
+        }
+    }
+
+    // =============================================
+    // 시장 지표 계산 — 100라운드 전체 (V1.5용)
+    // =============================================
+    private Map<String, Double> calculateFullMarketIndicators(GameSession session) {
+        List<StockPrice> spxList = loadPriceList(session, "^SPX");
+
+        int size = Math.min(100, spxList.size());
+        double[] closes = spxList.subList(0, size).stream()
+                .mapToDouble(StockPrice::getClose)
+                .toArray();
+
+        return calcIndicators(closes);
+    }
+
+    // =============================================
+    // 시장 지표 계산 — 현재 라운드까지 (V2용)
+    // =============================================
+    private Map<String, Double> calculateSoFarMarketIndicators(GameSession session, int currentRound) {
+        List<StockPrice> spxList = loadPriceList(session, "^SPX");
+
+        int size = Math.min(currentRound, spxList.size());
+        if (size < 2) {
+            Map<String, Double> empty = new LinkedHashMap<>();
+            empty.put("spxReturn", 0.0);
+            empty.put("spxVolatility", 0.0);
+            empty.put("spxMdd", 0.0);
+            return empty;
+        }
+
+        double[] closes = spxList.subList(0, size).stream()
+                .mapToDouble(StockPrice::getClose)
+                .toArray();
+
+        return calcIndicators(closes);
+    }
+
+    // =============================================
+    // 지표 계산 공통 로직
+    // =============================================
+    private Map<String, Double> calcIndicators(double[] closes) {
+        // 수익률
+        double spxReturn = (closes[closes.length - 1] - closes[0]) / closes[0] * 100;
+
+        // 변동성 (일별 수익률 표준편차)
+        double[] dailyReturns = new double[closes.length - 1];
+        for (int i = 0; i < dailyReturns.length; i++) {
+            dailyReturns[i] = (closes[i + 1] - closes[i]) / closes[i] * 100;
+        }
+        double mean = Arrays.stream(dailyReturns).average().orElse(0);
+        double variance = Arrays.stream(dailyReturns)
+                .map(r -> Math.pow(r - mean, 2))
+                .average().orElse(0);
+        double spxVolatility = Math.sqrt(variance);
+
+        // MDD (최대낙폭률)
+        double maxClose = closes[0];
+        double mdd = 0.0;
+        for (double close : closes) {
+            if (close > maxClose) maxClose = close;
+            double drawdown = (close - maxClose) / maxClose * 100;
+            if (drawdown < mdd) mdd = drawdown;
+        }
+
+        Map<String, Double> result = new LinkedHashMap<>();
+        result.put("spxReturn", Math.round(spxReturn * 10000.0) / 10000.0);
+        result.put("spxVolatility", Math.round(spxVolatility * 10000.0) / 10000.0);
+        result.put("spxMdd", Math.round(mdd * 10000.0) / 10000.0);
+        return result;
     }
 
     // =============================================
@@ -168,12 +363,10 @@ public class GameService {
     }
 
     // =============================================
-    // 검증용 게임 실행 (DB 저장 없이 start_date 직접 지정)
-    // Python 결과와 1:1 비교용
+    // 검증용 게임 실행
     // =============================================
     public Map<String, Object> validateGame(String startDate, Map<Integer, Integer> cardSelections) {
 
-        // 임시 세션 생성 (DB 저장 안 함)
         GameSession session = new GameSession(
                 "validate", 1, "lehman", "^SPX", startDate
         );
@@ -186,7 +379,6 @@ public class GameService {
 
         List<Map<String, Object>> allRounds = new ArrayList<>();
 
-        // 카드 선택 라운드 순서대로 처리
         List<Integer> sortedRounds = new ArrayList<>(cardSelections.keySet());
         Collections.sort(sortedRounds);
 
@@ -198,7 +390,6 @@ public class GameService {
             Card card = cardRepository.findById(cardId)
                     .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 카드: " + cardId));
 
-            // BUY_ONCE 즉시 매수
             if ("BUY_ONCE".equals(card.getType())) {
                 double price = getPriceAtRound(session, selectRound, card.getTicker());
                 if (price > 0) {
@@ -214,7 +405,6 @@ public class GameService {
                 }
             }
 
-            // 다음 선택 라운드 직전까지 계산
             int endRound = (idx + 1 < sortedRounds.size())
                     ? sortedRounds.get(idx + 1) - 1
                     : 100;
@@ -229,7 +419,6 @@ public class GameService {
             List<Map<String, Object>> segmentRounds = (List<Map<String, Object>>) calcResult.get("rounds");
             allRounds.addAll(segmentRounds);
 
-            // 다음 구간을 위해 상태 업데이트
             cash         = (long)   calcResult.get("finalCash");
             spxShares    = (double) calcResult.get("finalSpx");
             ndxShares    = (double) calcResult.get("finalNdx");
@@ -439,7 +628,7 @@ public class GameService {
     // 유틸 메서드
     // =============================================
     private boolean checkCondition(String condition,
-            double spxChangeRate, double ndxChangeRate, double aaplChangeRate) {
+                                   double spxChangeRate, double ndxChangeRate, double aaplChangeRate) {
         return switch (condition) {
             case "SPX_CHANGE <= -3"  -> spxChangeRate  <= -3;
             case "SPX_CHANGE <= -5"  -> spxChangeRate  <= -5;
@@ -458,8 +647,8 @@ public class GameService {
     }
 
     private double getTickerPrice(String ticker,
-            StockPrice spx, StockPrice ndx, StockPrice xauusd,
-            StockPrice uso, StockPrice aapl, StockPrice tlt) {
+                                  StockPrice spx, StockPrice ndx, StockPrice xauusd,
+                                  StockPrice uso, StockPrice aapl, StockPrice tlt) {
         return switch (ticker) {
             case "^SPX"   -> spx    != null ? spx.getClose()    : 0;
             case "^NDX"   -> ndx    != null ? ndx.getClose()    : 0;
