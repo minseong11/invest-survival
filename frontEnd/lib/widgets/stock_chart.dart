@@ -1,159 +1,113 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../models/round_data.dart';
-import '../models/price_data.dart';
-
-// 종목별 고정 색상
-const Map<String, Color> tickerColors = {
-  '^SPX':  Color(0xFF1971C2),  // 파랑
-  '^NDX':  Color(0xFF7048E8),  // 보라
-  'GLD':   Color(0xFFE67700),  // 주황
-  'USO':   Color(0xFF2F9E44),  // 초록
-  'AAPL':  Color(0xFF868E96),  // 회색
-  'TLT':   Color(0xFFE64980),  // 분홍
-};
-
-// 10배 배율이 필요한 종목 목록
-// ^SPX, ^NDX는 1200~1700 범위라 배율 불필요
-// 나머지는 100 이하라 10배 적용
-const Set<String> _scaledTickers = {'GLD', 'USO', 'AAPL', 'TLT'};
-
-Color tickerColor(String ticker) =>
-    tickerColors[ticker] ?? const Color(0xFF6B7684);
-
-double _applyScale(String ticker, double value) =>
-    _scaledTickers.contains(ticker) ? value * 10 : value;
 
 class StockChart extends StatelessWidget {
   final List<RoundData> rounds;
+  final double initialAsset;
 
   const StockChart({
     super.key,
     required this.rounds,
+    this.initialAsset = 10000000,
   });
 
-  // rounds에 존재하는 ticker 목록 추출
-  List<String> get _tickers {
-    if (rounds.isEmpty) return [];
-    final Set<String> seen = {};
-    final List<String> result = [];
+  // SPX 첫날 종가 (정규화 기준점)
+  double? get _spxBase {
     for (final r in rounds) {
-      for (final p in r.priceData) {
-        if (seen.add(p.ticker)) result.add(p.ticker);
-      }
+      final p = r.getPrice('^SPX');
+      if (p != null && p.close > 0) return p.close;
     }
-    return result;
+    return null;
   }
 
-  // 특정 ticker의 FlSpot 리스트 (배율 적용)
-  List<FlSpot> _spots(String ticker) {
-    final List<FlSpot> spots = [];
+  // S&P500 수익률(%) FlSpot 리스트
+  List<FlSpot> get _spxSpots {
+    final base = _spxBase;
+    if (base == null) return [];
+    final spots = <FlSpot>[];
     for (int i = 0; i < rounds.length; i++) {
-      final price = rounds[i].getPrice(ticker);
-      if (price != null) {
-        spots.add(FlSpot(i.toDouble(), _applyScale(ticker, price.close)));
+      final p = rounds[i].getPrice('^SPX');
+      if (p != null) {
+        final pct = (p.close - base) / base * 100;
+        spots.add(FlSpot(i.toDouble(), pct));
       }
     }
     return spots;
   }
 
-  // roundAsset 기반 내 자산 FlSpot 리스트
+  // 내 자산 수익률(%) FlSpot 리스트
   List<FlSpot> get _assetSpots {
-    final List<FlSpot> spots = [];
+    final spots = <FlSpot>[];
     for (int i = 0; i < rounds.length; i++) {
       final asset = rounds[i].roundAsset;
       if (asset != null) {
-        // 자산을 종목 스케일(~1200)에 맞게 축소: 10,000,000 → 1000 수준
-        spots.add(FlSpot(i.toDouble(), asset / 10000));
+        final pct = (asset - initialAsset) / initialAsset * 100;
+        spots.add(FlSpot(i.toDouble(), pct));
       }
     }
     return spots;
   }
 
-  // Y축 범위 (배율 적용된 종목 가격 + 자산 스팟 모두 포함)
   double get _minY {
-    double min = double.infinity;
-    for (final ticker in _tickers) {
-      for (final r in rounds) {
-        final price = r.getPrice(ticker);
-        if (price != null) {
-          final v = _applyScale(ticker, price.close);
-          if (v < min) min = v;
-        }
-      }
+    double min = 0;
+    for (final s in [..._spxSpots, ..._assetSpots]) {
+      if (s.y < min) min = s.y;
     }
-    for (final r in rounds) {
-      final asset = r.roundAsset;
-      if (asset != null) {
-        final v = asset / 10000;
-        if (v < min) min = v;
-      }
-    }
-    return min == double.infinity ? 0 : min * 0.97;
+    // 여유분 10% + 최소 -2%
+    return ((min * 1.15) - 2).floorToDouble();
   }
 
   double get _maxY {
-    double max = double.negativeInfinity;
-    for (final ticker in _tickers) {
-      for (final r in rounds) {
-        final price = r.getPrice(ticker);
-        if (price != null) {
-          final v = _applyScale(ticker, price.close);
-          if (v > max) max = v;
-        }
-      }
+    double max = 0;
+    for (final s in [..._spxSpots, ..._assetSpots]) {
+      if (s.y > max) max = s.y;
     }
-    for (final r in rounds) {
-      final asset = r.roundAsset;
-      if (asset != null) {
-        final v = asset / 10000;
-        if (v > max) max = v;
-      }
-    }
-    return max == double.negativeInfinity ? 100 : max * 1.03;
+    return ((max * 1.15) + 2).ceilToDouble();
   }
 
   @override
   Widget build(BuildContext context) {
     if (rounds.isEmpty) {
       return const Center(
-        child: Text('데이터 없음', style: TextStyle(color: Color(0xFF6B7684))),
+        child: Text('데이터 없음',
+            style: TextStyle(color: Color(0xFF6B7684))),
       );
     }
 
-    final tickers = _tickers;
+    final spxSpots   = _spxSpots;
     final assetSpots = _assetSpots;
-    final hasAsset = assetSpots.isNotEmpty;
+    final hasAsset   = assetSpots.isNotEmpty;
+    final minY       = _minY;
+    final maxY       = _maxY;
+    final range      = (maxY - minY).abs();
+    final interval   = range > 0 ? (range / 4) : 2.0;
 
-    // 종목 선 + 자산 선 합치기
-    final List<LineChartBarData> lineBars = [
-      // 종목별 선
-      ...tickers.map((ticker) {
-        final spots = _spots(ticker);
-        final color = tickerColor(ticker);
-        return LineChartBarData(
-          spots: spots,
-          color: color,
+    final lineBars = <LineChartBarData>[
+      // S&P 500 (파랑)
+      if (spxSpots.isNotEmpty)
+        LineChartBarData(
+          spots: spxSpots,
+          color: const Color(0xFF1971C2),
           barWidth: 1.5,
           isCurved: true,
           curveSmoothness: 0.3,
           dotData: FlDotData(
             show: true,
-            getDotPainter: (spot, _, __, index) {
-              final isLastDot = index == spots.length - 1;
+            getDotPainter: (spot, _, __, idx) {
+              final last = idx == spxSpots.length - 1;
               return FlDotCirclePainter(
-                radius: isLastDot ? 3 : 0,
-                color: color,
-                strokeWidth: isLastDot ? 2 : 0,
+                radius: last ? 3 : 0,
+                color: const Color(0xFF1971C2),
+                strokeWidth: last ? 2 : 0,
                 strokeColor: Colors.white,
               );
             },
           ),
           belowBarData: BarAreaData(show: false),
-        );
-      }),
+        ),
 
-      // 내 자산 선 (흰색 굵은 선)
+      // 내 자산 (검정)
       if (hasAsset)
         LineChartBarData(
           spots: assetSpots,
@@ -163,19 +117,19 @@ class StockChart extends StatelessWidget {
           curveSmoothness: 0.3,
           dotData: FlDotData(
             show: true,
-            getDotPainter: (spot, _, __, index) {
-              final isLastDot = index == assetSpots.length - 1;
+            getDotPainter: (spot, _, __, idx) {
+              final last = idx == assetSpots.length - 1;
               return FlDotCirclePainter(
-                radius: isLastDot ? 4 : 0,
+                radius: last ? 4 : 0,
                 color: const Color(0xFF111111),
-                strokeWidth: isLastDot ? 2 : 0,
+                strokeWidth: last ? 2 : 0,
                 strokeColor: Colors.white,
               );
             },
           ),
           belowBarData: BarAreaData(
             show: true,
-            color: const Color(0xFF111111).withValues(alpha: 0.05),
+            color: const Color(0xFF111111).withValues(alpha: 0.04),
           ),
         ),
     ];
@@ -184,31 +138,13 @@ class StockChart extends StatelessWidget {
       children: [
         // 범례
         Padding(
-          padding: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.only(bottom: 6),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              // 종목 범례
-              ...tickers.map((t) => Padding(
-                padding: const EdgeInsets.only(left: 10),
-                child: Row(
-                  children: [
-                    Container(width: 10, height: 2.5, color: tickerColor(t)),
-                    const SizedBox(width: 3),
-                    Text(
-                      _scaledTickers.contains(t) ? '$t×10' : t,
-                      style: const TextStyle(fontSize: 9, color: Color(0xFF6B7684)),
-                    ),
-                  ],
-                ),
-              )),
-              // 자산 범례
-              if (hasAsset) ...[
-                const SizedBox(width: 10),
-                Container(width: 10, height: 2.5, color: const Color(0xFF111111)),
-                const SizedBox(width: 3),
-                const Text('내 자산', style: TextStyle(fontSize: 9, color: Color(0xFF6B7684))),
-              ],
+              _legendDot(const Color(0xFF1971C2), 'S&P 500'),
+              const SizedBox(width: 12),
+              if (hasAsset) _legendDot(const Color(0xFF111111), '내 자산'),
             ],
           ),
         ),
@@ -217,22 +153,22 @@ class StockChart extends StatelessWidget {
         Expanded(
           child: LineChart(
             LineChartData(
-              minY: _minY,
-              maxY: _maxY,
+              minY: minY,
+              maxY: maxY,
               minX: 0,
               maxX: (rounds.length - 1).toDouble(),
-
               lineBarsData: lineBars,
-
               gridData: FlGridData(
                 show: true,
                 drawVerticalLine: false,
-                horizontalInterval: (_maxY - _minY) / 4,
-                getDrawingHorizontalLine: (_) => const FlLine(
-                  color: Color(0xFFEEEEEE), strokeWidth: 1,
+                horizontalInterval: interval,
+                getDrawingHorizontalLine: (value) => FlLine(
+                  color: value.abs() < 0.01
+                      ? const Color(0xFFCCCCCC)
+                      : const Color(0xFFEEEEEE),
+                  strokeWidth: value.abs() < 0.01 ? 1.0 : 0.5,
                 ),
               ),
-
               borderData: FlBorderData(
                 show: true,
                 border: const Border(
@@ -240,56 +176,87 @@ class StockChart extends StatelessWidget {
                   left:   BorderSide(color: Color(0xFFEEEEEE), width: 1),
                 ),
               ),
-
-              // Y축 숫자 제거
+              // 0% 기준 점선
+              extraLinesData: ExtraLinesData(
+                horizontalLines: [
+                  HorizontalLine(
+                    y: 0,
+                    color: const Color(0xFFBBBBBB),
+                    strokeWidth: 1,
+                    dashArray: [4, 4],
+                  ),
+                ],
+              ),
               titlesData: FlTitlesData(
+                // Y축: 수익률 %
+                leftTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    reservedSize: 38,
+                    interval: interval,
+                    getTitlesWidget: (value, _) => Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text(
+                        '${value >= 0 ? '+' : ''}${value.toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          fontSize: 8,
+                          color: Color(0xFF6B7684),
+                        ),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                  ),
+                ),
+                rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false)),
+                // X축: 날짜
                 bottomTitles: AxisTitles(
                   sideTitles: SideTitles(
                     showTitles: true,
-                    reservedSize: 24,
-                    interval: (rounds.length / 5).ceilToDouble(),
+                    reservedSize: 22,
+                    interval: (rounds.length / 4).ceilToDouble(),
                     getTitlesWidget: (value, _) {
-                      final index = value.toInt();
-                      if (index < 0 || index >= rounds.length) {
+                      final idx = value.toInt();
+                      if (idx < 0 || idx >= rounds.length) {
                         return const SizedBox.shrink();
                       }
-                      final date = rounds[index].date;
-                      final parts = date.split('-');
+                      final parts = rounds[idx].date.split('-');
                       final label = parts.length >= 3
                           ? '${parts[1]}/${parts[2]}'
-                          : date;
+                          : rounds[idx].date;
                       return Padding(
                         padding: const EdgeInsets.only(top: 4),
-                        child: Text(label, style: const TextStyle(
-                          fontSize: 9, color: Color(0xFF6B7684),
-                        )),
+                        child: Text(label,
+                            style: const TextStyle(
+                                fontSize: 8, color: Color(0xFF6B7684))),
                       );
                     },
                   ),
-                ),
-                leftTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-              ),
-
-              lineTouchData: LineTouchData(
-                touchTooltipData: LineTouchTooltipData(
-                  getTooltipItems: (spots) => spots.map((spot) {
-                    final index = spot.x.toInt();
-                    final date = index < rounds.length ? rounds[index].date : '';
-                    return LineTooltipItem(
-                      '$date\n${spot.y.toStringAsFixed(0)}',
-                      const TextStyle(
-                        color: Colors.white, fontSize: 10,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    );
-                  }).toList(),
                 ),
               ),
             ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _legendDot(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 12,
+          height: 2.5,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(1),
+          ),
+        ),
+        const SizedBox(width: 3),
+        Text(label,
+            style: const TextStyle(fontSize: 9, color: Color(0xFF6B7684))),
       ],
     );
   }
