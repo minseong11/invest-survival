@@ -5,6 +5,7 @@ FastAPI AI 추천 서버
 엔드포인트:
   POST /ai/v1/recommend — V1.5 사전 추천 (게임 시작 시)
   POST /ai/v2/recommend — V2 실시간 추천 (25·50라운드)
+  POST /ai/v2/feedback  — V2 LLM 자연어 피드백 (25·50라운드, v5.0 신규)
 
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
@@ -15,6 +16,9 @@ from itertools import permutations
 from typing import List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+import anthropic
+
+client = anthropic.Anthropic()
 
 # ── 경로 설정 ──────────────────────────────────────────────
 BASE_DIR       = os.path.dirname(__file__)
@@ -31,6 +35,21 @@ CARD_NAMES = {
     4: '금 피난처',     5: '기술의 파도',   6: '낙폭과대 사냥',
     7: '원유 베팅',     8: '역발상 투자',   9: '애플 줍줍',
     10: '채권 피난처',  11: '분할매수 장인',
+}
+
+# 카드 실제 발동 조건 (game_logic.py CARDS 딕셔너리 기준, v5.0 명세서 5장)
+CARD_LOGIC = {
+    1:  '1라운드 즉시 현금 30% SPX 매수 (1회성)',
+    2:  '매 라운드 조건 없이 현금 5%씩 GLD 매수 (무제한)',
+    3:  'SPX 전일대비 -3% 이하일 때마다 현금 20% SPX 매수',
+    4:  'SPX 전일대비 -5% 이하일 때마다 현금 15% GLD 매수',
+    5:  'NDX 전일대비 +2% 이상일 때마다 현금 10% NDX 매수',
+    6:  'NDX -4% 이하일 때 현금 25% NDX 매수 (최대 3회)',
+    7:  '1라운드 즉시 현금 20% USO 매수 (1회성)',
+    8:  'SPX +3% 이상일 때마다 보유 SPX 물량 15% 매도',
+    9:  'AAPL -5% 이하일 때마다 현금 10% AAPL 매수 (최대 5회)',
+    10: '매 라운드 조건 없이 현금 3%씩 TLT 매수 (무제한)',
+    11: '조건 없이 5라운드마다 정기 NDX 매수',
 }
 
 # ── V1.5 Feature 컬럼 ─────────────────────────────────────
@@ -52,7 +71,7 @@ FEATURE_COLS_V2 = [
 ]
 
 # ── 앱 초기화 + 모델 로드 ──────────────────────────────────
-app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='4.0')
+app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='5.0')
 
 model_v15 = None
 model_v2  = None
@@ -114,6 +133,24 @@ class V2RecommendResponse(BaseModel):
     recommendedCardId: int
     rankings: List[V2RankingItem]
 
+# V2 피드백 요청: Java → Python (v5.0 신규)
+class V2FeedbackRankingItem(BaseModel):
+    rank: int
+    cardId: int
+    contribution: float
+
+class V2FeedbackRequest(BaseModel):
+    spxReturnSoFar: float
+    spxVolatilitySoFar: float
+    spxMddSoFar: float
+    currentRound: int
+    alreadyCards: List[int]
+    rankings: List[V2FeedbackRankingItem]
+
+# V2 피드백 응답: Python → Java (v5.0 신규)
+class V2FeedbackResponse(BaseModel):
+    feedback: str
+
 
 # =============================================
 # V1.5 추천 로직
@@ -172,6 +209,43 @@ def make_feature_v2(spx_return: float, spx_vol: float, spx_mdd: float,
         *[already_enc[c] for c in ALREADY_COLS],
         *[selected_enc[c] for c in SELECTED_COLS],
     ]
+
+
+# =============================================
+# V2 피드백 로직 (v5.0 신규)
+# =============================================
+def format_card_line(card_id: int) -> str:
+    name = CARD_NAMES.get(card_id, f'카드{card_id}')
+    logic = CARD_LOGIC.get(card_id, '조건 정보 없음')
+    return f'- {name}: {logic}'
+
+
+def format_rankings(rankings: List[V2FeedbackRankingItem]) -> str:
+    return '\n'.join(
+        f'{r.rank}위. {CARD_NAMES.get(r.cardId, r.cardId)} '
+        f'({CARD_LOGIC.get(r.cardId, "")}) — 예상 기여도 {r.contribution}%'
+        for r in rankings
+    )
+
+
+def format_already(already_cards: List[int]) -> str:
+    if not already_cards:
+        return '(없음)'
+    return '\n'.join(format_card_line(cid) for cid in already_cards)
+
+
+def build_prompt(req: V2FeedbackRequest) -> str:
+    rankings_text = format_rankings(req.rankings)
+    already_text = format_already(req.alreadyCards)
+    return (
+        f'현재 시장: SPX 누적수익률 {req.spxReturnSoFar}%, '
+        f'변동성 {req.spxVolatilitySoFar}, MDD {req.spxMddSoFar}%\n'
+        f'현재 라운드: {req.currentRound}\n\n'
+        f'이미 보유한 카드(정확한 발동 조건 포함):\n{already_text}\n\n'
+        f'후보 카드 순위(정확한 발동 조건 포함):\n{rankings_text}\n\n'
+        f'위 카드들의 실제 발동 조건을 근거로 1위 카드가 왜 유리한지 '
+        f'2~3문장으로 한국어로 설명해줘. 카드 로직에 없는 내용은 지어내지 마.'
+    )
 
 
 # =============================================
@@ -274,6 +348,26 @@ def recommend_v2(req: V2RecommendRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'V2 추천 오류: {str(e)}')
+
+
+@app.post('/ai/v2/feedback', response_model=V2FeedbackResponse)
+def generate_feedback(req: V2FeedbackRequest):
+    """
+    V2 LLM 자연어 피드백 (v5.0 신규)
+    /ai/v2/recommend 결과(rankings) + 시장 상황 → Claude API로 자연어 설명 생성
+    실패해도 카드 추천 자체는 이미 끝난 상태이므로, 예외를 던지지 않고
+    feedback=""을 200으로 반환한다 (명세서 4장 에러 처리).
+    """
+    try:
+        msg = client.messages.create(
+            model='claude-sonnet-4-6',
+            max_tokens=300,
+            messages=[{'role': 'user', 'content': build_prompt(req)}]
+        )
+        return V2FeedbackResponse(feedback=msg.content[0].text)
+    except Exception as e:
+        print(f'⚠️  LLM 피드백 생성 실패: {e}')
+        return V2FeedbackResponse(feedback='')
 
 
 # =============================================
