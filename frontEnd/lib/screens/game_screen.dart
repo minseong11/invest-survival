@@ -47,6 +47,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   AiState          _aiState             = AiState.idle;
   int?             _v2RecommendedCardId;
   Map<int, double> _contributions       = {};
+  String           _aiFeedback          = ''; // LLM 자연어 피드백
   bool             _aiRequested         = false;
 
   Timer? _autoTimer;
@@ -161,6 +162,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _aiState             = AiState.loading;
       _v2RecommendedCardId = null;
       _contributions       = {};
+      _aiFeedback           = '';
     });
 
     try {
@@ -178,6 +180,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       setState(() {
         _v2RecommendedCardId = result.recommendedCardId;
         _contributions       = contribs;
+        _aiFeedback          = result.feedback; // 실패 시 서버가 "" 반환
         _aiState             = AiState.done;
       });
     } catch (_) {
@@ -191,6 +194,80 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _aiRequested         = false;
     _v2RecommendedCardId = null;
     _contributions       = {};
+    _aiFeedback          = '';
+  }
+
+  // =============================================
+  // AI 피드백 다이얼로그 (메모지처럼 화면 위에 오버레이)
+  // =============================================
+  void _showFeedbackDialog() {
+    if (_aiFeedback.isEmpty) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      barrierColor: Colors.black.withValues(alpha: 0.45),
+      builder: (dialogContext) {
+        return Dialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 헤더: 아이콘 + 타이틀 + 닫기(X)
+                Row(
+                  children: [
+                    Container(
+                      width: 28, height: 28,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEEEDFE),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: const Icon(Icons.chat_bubble_outline_rounded,
+                          size: 15, color: Color(0xFF3C3489)),
+                    ),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text('AI 투자 코치',
+                          style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF3C3489))),
+                    ),
+                    GestureDetector(
+                      onTap: () => Navigator.of(dialogContext).pop(),
+                      child: Container(
+                        width: 26, height: 26,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F3F5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.close_rounded,
+                            size: 15, color: Color(0xFF6B7684)),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                // 피드백 본문
+                Text(
+                  _aiFeedback,
+                  style: const TextStyle(
+                      fontSize: 13.5,
+                      height: 1.6,
+                      color: Color(0xFF111111)),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // =============================================
@@ -503,8 +580,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // ── 차트 ──────────────────────────────────
   Widget _buildChartArea() {
-    return SizedBox(
-      height: 160,
+    return Expanded(
+      flex: 4,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(8, 8, 12, 6),
@@ -528,84 +605,82 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final returnRate = round.returnRate;
     final isPos      = (returnRate ?? 0) >= 0;
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         // 내 수익률 박스
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: const Color(0xFFEEEEEE), width: 1),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  '내 수익률',
-                  style: TextStyle(
-                      fontSize: 10, color: Color(0xFF6B7684)),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  returnRate != null
-                      ? '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%'
-                      : '0.00%',
-                  style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w700,
-                      color: isPos
-                          ? const Color(0xFFE03131)
-                          : const Color(0xFF1971C2)),
-                ),
-              ],
-            ),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+              horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: const Color(0xFFEEEEEE), width: 1),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '내 수익률',
+                style: TextStyle(
+                    fontSize: 10, color: Color(0xFF6B7684)),
+              ),
+              Text(
+                returnRate != null
+                    ? '${isPos ? '+' : ''}${returnRate.toStringAsFixed(2)}%'
+                    : '0.00%',
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w700,
+                    color: isPos
+                        ? const Color(0xFFE03131)
+                        : const Color(0xFF1971C2)),
+              ),
+            ],
           ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(height: 8),
         // 총 자산 박스
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                  color: const Color(0xFFEEEEEE), width: 1),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  '총 자산',
-                  style: TextStyle(
-                      fontSize: 10, color: Color(0xFF6B7684)),
-                ),
-                const SizedBox(height: 4),
-                AnimatedBuilder(
-                  animation: _assetAnim,
-                  builder: (_, __) => Text(
-                    '${_formatNumber(_assetAnim.value)}원',
-                    style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111111)),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(
+              horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+                color: const Color(0xFFEEEEEE), width: 1),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                '총 자산',
+                style: TextStyle(
+                    fontSize: 10, color: Color(0xFF6B7684)),
+              ),
+              Row(
+                children: [
+                  AnimatedBuilder(
+                    animation: _assetAnim,
+                    builder: (_, __) => Text(
+                      '${_formatNumber(_assetAnim.value)}원',
+                      style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF111111)),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(round.date,
-                    style: const TextStyle(
-                        fontSize: 10,
-                        color: Color(0xFF6B7684))),
-              ],
-            ),
+                  const SizedBox(width: 8),
+                  Text(round.date,
+                      style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFF6B7684))),
+                ],
+              ),
+            ],
           ),
         ),
       ],
@@ -633,6 +708,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF6B7684))),
               const Spacer(),
+              // 피드백 버튼: 추천 완료 + 피드백 있을 때만
+              if (_aiState == AiState.done && _aiFeedback.isNotEmpty) ...[
+                _buildFeedbackButton(),
+                const SizedBox(width: 6),
+              ],
               // AI 버튼: 25·50라운드만 표시
               if (_canUseV2) _buildAiButton(),
             ],
@@ -683,6 +763,34 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   // ── AI 버튼 ────────────────────────────────
+  // ── AI 피드백 버튼 (메모지 다이얼로그 열기) ──
+  Widget _buildFeedbackButton() {
+    return GestureDetector(
+      onTap: _showFeedbackDialog,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFFEEEDFE),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFF3C3489), width: 1),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.chat_bubble_outline_rounded,
+                size: 12, color: Color(0xFF3C3489)),
+            SizedBox(width: 4),
+            Text('AI 피드백',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF3C3489))),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAiButton() {
     switch (_aiState) {
       case AiState.idle:

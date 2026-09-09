@@ -25,11 +25,13 @@ class V2RecommendResult {
   final int recommendedCardId;
   final String recommendedCardName;
   final List<CardRanking> rankings;
+  final String feedback; // AI 자연어 피드백 (LLM 실패 시 빈 문자열)
 
   V2RecommendResult({
     required this.recommendedCardId,
     required this.recommendedCardName,
     required this.rankings,
+    this.feedback = '',
   });
 
   factory V2RecommendResult.fromJson(Map<String, dynamic> json) {
@@ -40,6 +42,7 @@ class V2RecommendResult {
       rankings: list
           .map((e) => CardRanking.fromJson(e as Map<String, dynamic>))
           .toList(),
+      feedback: (json['feedback'] as String?) ?? '',
     );
   }
 
