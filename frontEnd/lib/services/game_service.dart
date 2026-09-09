@@ -59,6 +59,7 @@ class GameService {
   // V2 실시간 추천: 25·50라운드 카드 선택 시
   // so_far 시장 지표 + 이미 선택한 카드 기반
   // 75라운드 제외 (스피어만 역상관 ρ=-0.12)
+  // 응답에 feedback 필드가 함께 포함되어 옴 (v5.0)
   Future<V2RecommendResult> getV2Recommendation({
     required String sessionId,
     required int currentRound,
