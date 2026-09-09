@@ -48,6 +48,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   int?             _v2RecommendedCardId;
   Map<int, double> _contributions       = {};
   String           _aiFeedback          = ''; // LLM 자연어 피드백
+  bool             _isFeedbackLoading   = false; // 피드백 버튼 자체 로딩
+  List<CardRanking> _lastRankings       = []; // 피드백 요청 시 재사용
   bool             _aiRequested         = false;
 
   Timer? _autoTimer;
@@ -180,7 +182,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       setState(() {
         _v2RecommendedCardId = result.recommendedCardId;
         _contributions       = contribs;
-        _aiFeedback          = result.feedback; // 실패 시 서버가 "" 반환
+        _lastRankings        = result.rankings;
+        _aiFeedback          = result.feedback; // v5.0: recommend 응답에 함께 포함
         _aiState             = AiState.done;
       });
     } catch (_) {
@@ -195,6 +198,23 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _v2RecommendedCardId = null;
     _contributions       = {};
     _aiFeedback          = '';
+    _isFeedbackLoading   = false;
+    _lastRankings        = [];
+  }
+
+  // =============================================
+  // AI 피드백 버튼 클릭 → 이미 받아온 feedback을 다이얼로그로 표시
+  // (별도 API 호출 없음. getV2Recommendation 응답에 이미 포함돼 있음)
+  // =============================================
+  void _onFeedbackButtonTap() {
+    if (_aiState != AiState.done || _aiFeedback.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('먼저 "AI 추천받기"를 눌러주세요'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      return;
+    }
+    _showFeedbackDialog();
   }
 
   // =============================================
@@ -708,11 +728,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF6B7684))),
               const Spacer(),
-              // 피드백 버튼: 추천 완료 + 피드백 있을 때만
-              if (_aiState == AiState.done && _aiFeedback.isNotEmpty) ...[
-                _buildFeedbackButton(),
-                const SizedBox(width: 6),
-              ],
+              // AI 피드백 버튼: 항상 표시 (누르면 그때 요청)
+              _buildFeedbackButton(),
+              const SizedBox(width: 6),
               // AI 버튼: 25·50라운드만 표시
               if (_canUseV2) _buildAiButton(),
             ],
@@ -766,7 +784,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // ── AI 피드백 버튼 (메모지 다이얼로그 열기) ──
   Widget _buildFeedbackButton() {
     return GestureDetector(
-      onTap: _showFeedbackDialog,
+      onTap: _onFeedbackButtonTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
