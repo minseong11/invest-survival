@@ -139,8 +139,74 @@ public class GameService {
         }
     }
 
+//    // =============================================
+//    // V2 실시간 추천
+//    // =============================================
+//    public Map<String, Object> recommendV2(String sessionId, Integer currentRound,
+//                                           List<Integer> alreadyCards,
+//                                           List<Integer> candidateCards) {
+//        GameSession session = sessionRepository.findById(sessionId)
+//                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다"));
+//
+//        // 현재 라운드까지 so_far 지표 계산
+//        Map<String, Double> indicators = calculateSoFarMarketIndicators(session, currentRound);
+//
+//        // Python FastAPI 호출
+//        Map<String, Object> requestBody = new LinkedHashMap<>();
+//        requestBody.put("spxReturnSoFar", indicators.get("spxReturn"));
+//        requestBody.put("spxVolatilitySoFar", indicators.get("spxVolatility"));
+//        requestBody.put("spxMddSoFar", indicators.get("spxMdd"));
+//        requestBody.put("currentRound", currentRound);
+//        requestBody.put("alreadyCards", alreadyCards);
+//        requestBody.put("candidateCards", candidateCards);
+//
+//        try {
+//            HttpHeaders headers = new HttpHeaders();
+//            headers.setContentType(MediaType.APPLICATION_JSON);
+//            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+//
+//            ResponseEntity<Map> response = restTemplate.exchange(
+//                    aiServerUrl + "/ai/v2/recommend",
+//                    HttpMethod.POST,
+//                    entity,
+//                    Map.class
+//            );
+//
+//            @SuppressWarnings("unchecked")
+//            Map<String, Object> body = response.getBody();
+//
+//            // recommendedCardName 추가
+//            Integer recommendedCardId = (Integer) body.get("recommendedCardId");
+//            String recommendedCardName = cardRepository.findById(recommendedCardId)
+//                    .map(Card::getName)
+//                    .orElse("");
+//
+//            // rankings에 cardName 추가
+//            @SuppressWarnings("unchecked")
+//            List<Map<String, Object>> rawRankings = (List<Map<String, Object>>) body.get("rankings");
+//            List<Map<String, Object>> rankings = new ArrayList<>();
+//            for (Map<String, Object> item : rawRankings) {
+//                Map<String, Object> enriched = new LinkedHashMap<>(item);
+//                Integer cardId = (Integer) item.get("cardId");
+//                cardRepository.findById(cardId).ifPresent(card ->
+//                        enriched.put("cardName", card.getName())
+//                );
+//                rankings.add(enriched);
+//            }
+//
+//            Map<String, Object> result = new LinkedHashMap<>();
+//            result.put("recommendedCardId", recommendedCardId);
+//            result.put("recommendedCardName", recommendedCardName);
+//            result.put("rankings", rankings);
+//            return result;
+//
+//        } catch (Exception e) {
+//            throw new RuntimeException("AI 서버에 연결할 수 없습니다: " + e.getMessage());
+//        }
+//    }
+
     // =============================================
-    // V2 실시간 추천
+    // V2 실시간 추천 (+ LLM 피드백)
     // =============================================
     public Map<String, Object> recommendV2(String sessionId, Integer currentRound,
                                            List<Integer> alreadyCards,
@@ -160,6 +226,9 @@ public class GameService {
         requestBody.put("alreadyCards", alreadyCards);
         requestBody.put("candidateCards", candidateCards);
 
+        Integer recommendedCardId;
+        List<Map<String, Object>> rawRankings;
+
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
@@ -175,33 +244,80 @@ public class GameService {
             @SuppressWarnings("unchecked")
             Map<String, Object> body = response.getBody();
 
-            // recommendedCardName 추가
-            Integer recommendedCardId = (Integer) body.get("recommendedCardId");
-            String recommendedCardName = cardRepository.findById(recommendedCardId)
-                    .map(Card::getName)
-                    .orElse("");
+            recommendedCardId = (Integer) body.get("recommendedCardId");
 
-            // rankings에 cardName 추가
             @SuppressWarnings("unchecked")
-            List<Map<String, Object>> rawRankings = (List<Map<String, Object>>) body.get("rankings");
-            List<Map<String, Object>> rankings = new ArrayList<>();
-            for (Map<String, Object> item : rawRankings) {
-                Map<String, Object> enriched = new LinkedHashMap<>(item);
-                Integer cardId = (Integer) item.get("cardId");
-                cardRepository.findById(cardId).ifPresent(card ->
-                        enriched.put("cardName", card.getName())
-                );
-                rankings.add(enriched);
-            }
-
-            Map<String, Object> result = new LinkedHashMap<>();
-            result.put("recommendedCardId", recommendedCardId);
-            result.put("recommendedCardName", recommendedCardName);
-            result.put("rankings", rankings);
-            return result;
+            List<Map<String, Object>> r = (List<Map<String, Object>>) body.get("rankings");
+            rawRankings = r;
 
         } catch (Exception e) {
             throw new RuntimeException("AI 서버에 연결할 수 없습니다: " + e.getMessage());
+        }
+
+        // recommendedCardName 추가
+        String recommendedCardName = cardRepository.findById(recommendedCardId)
+                .map(Card::getName)
+                .orElse("");
+
+        // rankings에 cardName 추가
+        List<Map<String, Object>> rankings = new ArrayList<>();
+        for (Map<String, Object> item : rawRankings) {
+            Map<String, Object> enriched = new LinkedHashMap<>(item);
+            Integer cardId = (Integer) item.get("cardId");
+            cardRepository.findById(cardId).ifPresent(card ->
+                    enriched.put("cardName", card.getName())
+            );
+            rankings.add(enriched);
+        }
+
+        // LLM 자연어 피드백 (실패해도 추천은 정상 반환)
+        String feedback = requestV2Feedback(indicators, currentRound, alreadyCards, rawRankings);
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("recommendedCardId", recommendedCardId);
+        result.put("recommendedCardName", recommendedCardName);
+        result.put("rankings", rankings);
+        result.put("feedback", feedback);
+        return result;
+    }
+
+    // =============================================
+    // LLM 피드백 요청 — 실패 시 빈 문자열 반환
+    // =============================================
+    private String requestV2Feedback(Map<String, Double> indicators, Integer currentRound,
+                                     List<Integer> alreadyCards,
+                                     List<Map<String, Object>> rawRankings) {
+        // 명세서 기준 25·50라운드만 피드백 생성
+        if (currentRound == null || (currentRound != 25 && currentRound != 50)) {
+            return "";
+        }
+
+        try {
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("spxReturnSoFar", indicators.get("spxReturn"));
+            body.put("spxVolatilitySoFar", indicators.get("spxVolatility"));
+            body.put("spxMddSoFar", indicators.get("spxMdd"));
+            body.put("currentRound", currentRound);
+            body.put("alreadyCards", alreadyCards != null ? alreadyCards : new ArrayList<Integer>());
+            body.put("rankings", rawRankings);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    aiServerUrl + "/ai/v2/feedback",
+                    HttpMethod.POST,
+                    entity,
+                    Map.class
+            );
+
+            Object value = response.getBody() != null ? response.getBody().get("feedback") : null;
+            return value != null ? value.toString() : "";
+
+        } catch (Exception e) {
+            // 타임아웃·서버오류 등 어떤 이유로든 실패하면 게임 진행 막지 않고 빈 문자열
+            return "";
         }
     }
 
