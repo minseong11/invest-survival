@@ -5,6 +5,16 @@ LLM이 생성한 feedback 문장이 다음 두 가지와 모순되지 않는지 
   1) 카드의 실제 발동 조건 (CARD_FACTS 기준)
   2) V2 출력값 (rankings의 contribution, 시장 지표 등)
 
+v3 변경 사항 (test_verify_feedback.py 자기 테스트로 발견한 문제 수정):
+  - CARD_FACTS[11](분할매수 장인) buy_ratio_pct가 None으로 비어 있었음 →
+    실제 game_logic.py CARDS[11]['ratio']=0.10 확인 후 10으로 수정 (교수님 지적 ③: 데이터 드리프트 실사례)
+  - "조건 % 검사"를 절(clause) 단위 + 제외 키워드 방식에서, 카드 이름 등장 위치 기준
+    근접 윈도우(앞 5자~뒤 25자) 방식으로 교체:
+    * 기존 방식은 "기여도/수익률/MDD" 같은 키워드가 절에 있으면 조건 검사 자체를 건너뛰어서
+      그 안에 숨은 진짜 오류를 못 잡는 사각지대가 있었음 (교수님 지적 ②, TC09로 재현)
+    * 기존 방식은 한 절에 카드 이름이 2개 이상 있으면 %가 엉뚱한 카드 것으로 오귀속되는
+      문제도 있었음 (PR #66 알려진 한계, TC10으로 재현)
+    * 새 방식은 카드 이름 "근처"에 있는 %만 그 카드의 조건 후보로 보므로 두 문제를 동시에 해결
 """
 import re
 from dataclasses import dataclass, field
@@ -61,8 +71,8 @@ CARD_FACTS: Dict[int, CardFact] = {
                  '매 라운드 조건 없이 현금 3%씩 TLT 매수 (무제한)',
                  threshold_pcts=[], buy_ratio_pct=3, max_trigger=None),
     11: CardFact(11, '분할매수 장인', '^NDX', 'PERIODIC',
-                 '조건 없이 5라운드마다 정기 NDX 매수',
-                 threshold_pcts=[], buy_ratio_pct=None, max_trigger=None, period_rounds=5),
+                 '조건 없이 5라운드마다 현금 10% NDX 매수',
+                 threshold_pcts=[], buy_ratio_pct=10, max_trigger=None, period_rounds=5),
 }
 
 CARD_NAME_TO_ID = {c.name: c.id for c in CARD_FACTS.values()}
@@ -92,19 +102,20 @@ def _split_clauses(sentence: str) -> List[str]:
     return [c.strip() for c in re.split(r'[,，]', sentence) if c.strip()]
 
 
-# 카드의 "발동 조건 %"가 아니라 다른 종류의 수치(시장 지표, 예상 기여도 등)를
-# 설명하는 문맥임을 나타내는 키워드. 이런 키워드가 있는 절(clause)은
-# 조건 불일치 검사에서 제외한다 (오탐 방지).
-_NON_CONDITION_CONTEXT_KEYWORDS = [
-    '기여도', '수익률', 'MDD', '변동성', '손실', '마이너스',
-    '가능성', '누적', '예상',
-]
-
 # 카드 자체의 발동 조건(임계값 %)을 서술할 때 실제로 같이 쓰이는 표현.
-# 이 키워드가 없으면 %가 있어도 "조건 서술"로 보지 않는다.
+# %값 주변에 이 표현이 없으면 %가 있어도 "조건 서술"로 보지 않는다.
 _CONDITION_TRIGGER_KEYWORDS = [
     '이하', '이상', '급락', '상승', '반등',
 ]
+
+# 카드 이름 등장 위치 기준 근접 윈도우 (문자 수).
+# "카드이름은 SPX가 -3% 이하일 때 ..." 같은 한국어 어순에서
+# 조건 서술은 보통 카드 이름 뒤에 붙으므로 뒤쪽을 더 넓게 잡는다.
+_NAME_WINDOW_BEFORE = 5
+_NAME_WINDOW_AFTER = 25
+
+# %값이 "조건성"인지 판단할 때, 그 % 주변 몇 자 이내에 트리거 단어가 있어야 하는지
+_TRIGGER_NEARBY_SPAN = 10
 
 
 def _extract_percentages(text: str) -> List[float]:
@@ -113,11 +124,30 @@ def _extract_percentages(text: str) -> List[float]:
     return [float(f) for f in found]
 
 
-def _is_condition_description(clause: str) -> bool:
-    """이 절이 카드의 실제 발동 조건(%)을 서술하는 문맥인지 판단"""
-    if any(kw in clause for kw in _NON_CONDITION_CONTEXT_KEYWORDS):
-        return False
-    return any(kw in clause for kw in _CONDITION_TRIGGER_KEYWORDS)
+def _extract_condition_percentages_near_name(sentence: str, name: str) -> List[float]:
+    """
+    문장에서 카드 이름이 등장한 위치 '근처'에 있는 조건성 %만 추출한다.
+
+    - 근접 윈도우: 이름 등장 위치의 앞 5자 ~ 뒤 25자. 한 절/문장에 카드가
+      여러 개 나열돼도, 이름과 멀리 떨어진 다른 카드의 %를 끌어와
+      잘못 대조하는 오귀속을 막기 위함 (예: TC10).
+    - 조건성 판단: %값 주변(앞뒤 10자 이내)에 이하/이상/급락/상승/반등 같은
+      조건 서술어가 있는 경우만 "이 카드의 조건 %"로 인정한다. 절 전체에
+      '기여도/수익률/MDD' 같은 무관한 키워드가 섞여 있어도, %값 바로 옆에
+      조건 서술어가 붙어 있으면 정상적으로 검사 대상에 포함된다 (예: TC09).
+    """
+    results: List[float] = []
+    for name_match in re.finditer(re.escape(name), sentence):
+        win_start = max(0, name_match.start() - _NAME_WINDOW_BEFORE)
+        win_end = min(len(sentence), name_match.end() + _NAME_WINDOW_AFTER)
+        window_text = sentence[win_start:win_end]
+
+        for pct_match in re.finditer(r'([+-]?\d+(?:\.\d+)?)\s*%', window_text):
+            pct_pos = pct_match.start()
+            nearby = window_text[max(0, pct_pos - _TRIGGER_NEARBY_SPAN): pct_pos + _TRIGGER_NEARBY_SPAN]
+            if any(t in nearby for t in _CONDITION_TRIGGER_KEYWORDS):
+                results.append(float(pct_match.group(1)))
+    return results
 
 
 def verify_feedback(
@@ -155,27 +185,21 @@ def verify_feedback(
                 continue  # 애초에 관련 없는 카드면 아래 조건 대조는 의미 없음
 
             # 2) 조건부 카드인데 엉뚱한 %가 붙었는가
-            #    - 카드 이름과 같은 "절(clause)"에 있는 %만 검사 대상으로 삼는다
-            #      (쉼표로 나열된 다른 카드/지표의 %까지 끌어와 오탐하는 것을 방지)
-            #    - 기여도·수익률·MDD 등 "조건이 아닌 수치"를 서술하는 절은 애초에 제외
-            #    - "이하/이상/급락/상승" 같은 조건 서술어가 없는 절도 제외
+            #    - 카드 "이름 근처"에 있는 조건성 %만 검사 대상으로 삼는다 (v3)
+            #      → 절 전체를 보지 않으므로, 무관한 키워드에 가려 놓치는 사각지대(TC09)와
+            #        절 안의 다른 카드 %를 잘못 끌어오는 오귀속(TC10)을 동시에 방지
             if fact.trigger_type == 'CONDITION' and fact.threshold_pcts:
-                clauses_with_name = [c for c in _split_clauses(sentence) if name in c]
-                for clause in clauses_with_name:
-                    if not _is_condition_description(clause):
-                        continue
-                    clause_pcts = _extract_percentages(clause)
-                    if not clause_pcts:
-                        continue
+                near_pcts = _extract_condition_percentages_near_name(sentence, name)
+                if near_pcts:
                     match = any(
                         abs(p - t) < 0.5  # 반올림 오차 허용
-                        for p in clause_pcts
+                        for p in near_pcts
                         for t in fact.threshold_pcts
                     )
                     if not match:
                         issues.append(
-                            f"[조건 불일치 의심] '{name}' 절에 등장한 %({clause_pcts})가 "
-                            f"실제 발동 조건({fact.threshold_pcts}%)과 다름 → 절: \"{clause}\""
+                            f"[조건 불일치 의심] '{name}' 근처에 등장한 %({near_pcts})가 "
+                            f"실제 발동 조건({fact.threshold_pcts}%)과 다름 → 문장: \"{sentence}\""
                         )
 
             clauses_with_name_all = [c for c in _split_clauses(sentence) if name in c]
