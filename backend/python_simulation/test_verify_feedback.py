@@ -149,6 +149,213 @@ tc(
     ),
 )
 
+# =============================================================
+# TC11~TC30: 표현 다양성 / 경계값 / 다중 카드 / 알려진 미해결 사각지대 확장
+# "손수 만든 테스트를 늘려도 되냐"는 질문에 대한 답으로 추가.
+# 여기서부터는 두 종류로 나뉜다.
+#   (A) 기존 규칙이 '다른 상황'에서도 여전히 정확한지 재확인하는 케이스
+#   (B) [GAP] 표시가 붙은, 아직 못 고친 진짜 사각지대를 "문서화"하는 케이스
+#       → expect_consistent=True로 돼 있어도 "검증기가 옳다"는 뜻이 아니라
+#         "지금 코드가 실제로 이렇게 놓친다"는 걸 기록해두는 것.
+# =============================================================
+
+# ── TC11 [GAP]: '이하/이상/급락/상승/반등'이 아닌 다른 표현("빠지면")은 아예 검사 안 됨 ──
+tc(
+    "TC11_GAP_paraphrase_not_recognized_1",
+    "공포탐욕은 SPX가 -2%나 빠지면 매수하는 카드입니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=True,  # ⚠ 실제로는 -2%가 틀림(정답 -3%)이지만 트리거 단어가 없어 검사 자체가 안 됨
+    note="[GAP] '빠지면'은 트리거 단어 목록(이하/이상/급락/상승/반등)에 없어서 %가 틀려도 못 잡음.",
+)
+
+# ── TC12 [GAP]: '초과하면' 표현도 마찬가지로 인식 안 됨 ──
+tc(
+    "TC12_GAP_paraphrase_not_recognized_2",
+    "기술의 파도는 NDX가 +5%를 초과하면 매수합니다.",
+    already_cards=[5], ranking_card_ids=[],
+    expect_consistent=True,  # 실제 정답은 +2%인데 틀린 +5%가 그냥 통과됨
+    note="[GAP] '초과하면'도 트리거 단어에 없어서 실제 조건(+2%)과 다른 +5%를 못 잡음.",
+)
+
+# ── TC13 [GAP]: '밑돌면' 표현도 인식 안 됨 ──
+tc(
+    "TC13_GAP_paraphrase_not_recognized_3",
+    "금 피난처는 SPX가 -2%를 밑돌면 매수하는 카드입니다.",
+    already_cards=[4], ranking_card_ids=[],
+    expect_consistent=True,  # 실제 정답은 -5%인데 틀린 -2%가 그냥 통과됨
+    note="[GAP] '밑돌면'도 트리거 단어에 없어서 실제 조건(-5%)과 다른 -2%를 못 잡음.",
+)
+
+# ── TC14 [GAP]: '웃돌면' 표현도 인식 안 됨 (매도 카드) ──
+tc(
+    "TC14_GAP_paraphrase_not_recognized_4",
+    "역발상 투자는 SPX가 +10%를 웃돌면 매도합니다.",
+    already_cards=[8], ranking_card_ids=[],
+    expect_consistent=True,  # 실제 정답은 +3%인데 틀린 +10%가 그냥 통과됨
+    note="[GAP] '웃돌면'도 트리거 단어에 없어서 실제 조건(+3%)과 다른 +10%를 못 잡음.",
+)
+
+# ── TC15: 반올림 오차 허용 범위(0.5 미만) 경계 — 통과해야 함 ──
+tc(
+    "TC15_tolerance_boundary_pass",
+    "공포탐욕은 SPX가 -3.4% 이하일 때 매수합니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=True,
+    note="실제 -3%와 차이 0.4 (<0.5) → 반올림 오차로 허용돼서 통과해야 함",
+)
+
+# ── TC16: 반올림 오차 허용 범위(0.5 미만) 경계 밖 — 잡혀야 함 ──
+tc(
+    "TC16_tolerance_boundary_fail",
+    "공포탐욕은 SPX가 -3.6% 이하일 때 매수합니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "공포탐욕"],
+    note="실제 -3%와 차이 0.6 (>=0.5) → 오차 허용 범위 밖이라 잡혀야 함",
+)
+
+# ── TC17: %가 아예 없는 카드 언급 — 검사할 게 없으니 통과 ──
+tc(
+    "TC17_no_percentage_mentioned",
+    "거인의 어깨는 게임 시작과 동시에 SPX를 매수하는 카드입니다.",
+    already_cards=[1], ranking_card_ids=[],
+    expect_consistent=True,
+    note="%가 아예 없어서 조건 대조 자체가 발생하지 않음 → 통과해야 함",
+)
+
+# ── TC18: 같은 카드가 두 문장에서 각각 다르게 서술 (하나는 맞고 하나는 틀림) ──
+tc(
+    "TC18_same_card_twice_one_wrong",
+    "공포탐욕은 -3% 이하에서 매수합니다. 공포탐욕은 -1% 이하에서도 발동한 적 있습니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "공포탐욕"],
+    note="두 번째 문장의 -1%가 틀림(정답 -3%) → 문장 단위로 각각 검사되어 잡혀야 함",
+)
+
+# ── TC19: 매도 카드(역발상 투자) 조건 정확 ──
+tc(
+    "TC19_sell_card_correct",
+    "역발상 투자는 SPX가 +3% 이상일 때 보유 물량을 매도하는 카드입니다.",
+    already_cards=[8], ranking_card_ids=[],
+    expect_consistent=True,
+    note="SELL_ON_CONDITION 카드도 BUY 카드와 동일한 로직으로 정확히 검사되는지 확인",
+)
+
+# ── TC20: 매도 카드(역발상 투자) 조건 오류 ──
+tc(
+    "TC20_sell_card_wrong",
+    "역발상 투자는 SPX가 +7% 이상일 때 보유 물량을 매도하는 카드입니다.",
+    already_cards=[8], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "역발상 투자"],
+    note="실제 조건 +3%인데 +7%로 틀림 → 매도 카드에서도 잡혀야 함",
+)
+
+# ── TC21: PERIODIC 카드(분할매수 장인)를 조건부처럼 서술 — 잡혀야 함 ──
+tc(
+    "TC21_periodic_described_as_condition",
+    "분할매수 장인은 NDX가 -4% 이하일 때 매수하는 카드입니다.",
+    already_cards=[11], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건부로 오기재 의심", "분할매수 장인"],
+    note="PERIODIC(5라운드마다 정기매수) 카드인데 조건부(-4% 이하일 때)처럼 서술됨 → 잡혀야 함",
+)
+
+# ── TC22: PERIODIC 카드를 정확히 서술 ──
+tc(
+    "TC22_periodic_described_correctly",
+    "분할매수 장인은 조건 없이 5라운드마다 NDX를 매수하는 카드입니다.",
+    already_cards=[11], ranking_card_ids=[],
+    expect_consistent=True,
+    note="정기 매수 카드를 정확히 서술 → 위반 없어야 함",
+)
+
+# ── TC23: 카드 3개, 문장을 나눠서 각각 서술 — 전부 정답 ──
+tc(
+    "TC23_three_cards_separate_sentences_all_correct",
+    "공포탐욕은 -3% 이하일 때 매수합니다. 금 피난처는 -5% 이하일 때 매수합니다. "
+    "낙폭과대 사냥은 -4% 이하일 때 매수합니다.",
+    already_cards=[3, 4, 6], ranking_card_ids=[],
+    expect_consistent=True,
+    note="문장을 나눠서 서술하면 카드 이름 근처 윈도우가 서로 안 겹침 → 3개 다 정확히 검사돼야 함",
+)
+
+# ── TC24: 카드 2개, 문장을 나눠서 서술 — 하나만 오답 ──
+tc(
+    "TC24_two_cards_separate_sentences_one_wrong",
+    "공포탐욕은 -3% 이하일 때 매수합니다. 금 피난처는 -2% 이하일 때 매수합니다.",
+    already_cards=[3, 4], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "금 피난처"],
+    note="금 피난처 조건이 -2%로 틀림(정답 -5%) → 공포탐욕은 정상, 금 피난처만 잡혀야 함",
+)
+
+# ── TC25 [GAP]: 최대 발동 횟수를 숫자로 잘못 서술해도 못 잡음 ('무제한' 아닐 때) ──
+tc(
+    "TC25_GAP_max_trigger_wrong_number_not_caught",
+    "낙폭과대 사냥은 최대 5회까지만 발동합니다.",
+    already_cards=[6], ranking_card_ids=[],
+    expect_consistent=True,  # ⚠ 실제 정답은 최대 3회인데 5회라고 틀리게 써도 안 잡힘
+    note=(
+        "[GAP] 최대 횟수 검사 규칙(4번)은 '무제한'이라는 단어만 찾지, 숫자 자체가 "
+        "맞는지는 대조하지 않음. 그래서 실제로는 최대 3회인데 '5회'라고 써도 통과됨."
+    ),
+)
+
+# ── TC26: 여러 문장에 걸쳐 요청에 없는 카드를 언급 (환각) ──
+tc(
+    "TC26_hallucinated_card_among_valid_ones",
+    "공포탐욕은 -3% 이하일 때 매수합니다. 그리고 거인의 어깨도 이번 판에 도움이 됐습니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["미포함 카드 언급", "거인의 어깨"],
+    note="요청에 없는 '거인의 어깨'(id=1)를 두 번째 문장에서 언급 → 잡혀야 함",
+)
+
+# ── TC27: 오차 허용 경계값 정확히 0.5 — 미만이 아니므로 잡혀야 함 ──
+tc(
+    "TC27_tolerance_exact_boundary_fail",
+    "공포탐욕은 SPX가 -3.5% 이하일 때 매수합니다.",
+    already_cards=[3], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "공포탐욕"],
+    note="코드가 'abs(차이) < 0.5'로 엄격 부등호를 쓰므로, 차이가 정확히 0.5면 허용 안 됨 → 잡혀야 함",
+)
+
+# ── TC28: 애플 줍줍, 조건과 최대횟수 둘 다 정확 ──
+tc(
+    "TC28_apple_condition_and_max_both_correct",
+    "애플 줍줍은 AAPL이 -5% 이하일 때 매수하며 최대 5회까지 발동합니다.",
+    already_cards=[9], ranking_card_ids=[],
+    expect_consistent=True,
+    note="조건(-5%)과 최대 횟수(5회) 모두 실제와 일치 → 위반 없어야 함",
+)
+
+# ── TC29: 애플 줍줍, 조건만 오답 ──
+tc(
+    "TC29_apple_condition_wrong",
+    "애플 줍줍은 AAPL이 -8% 이하일 때 매수하며 최대 5회까지 발동합니다.",
+    already_cards=[9], ranking_card_ids=[],
+    expect_consistent=False,
+    expect_issue_keywords=["조건 불일치 의심", "애플 줍줍"],
+    note="조건이 -8%로 틀림(정답 -5%) → 최대 횟수는 맞지만 조건 불일치로 잡혀야 함",
+)
+
+# ── TC30 [GAP]: 무조건부 카드를 '하락할 때만' 같은 표현으로 잘못 조건부화해도 못 잡음 ──
+tc(
+    "TC30_GAP_unconditional_miswritten_with_unrecognized_word",
+    "채권 피난처는 TLT가 하락할 때만 매수하는 카드입니다.",
+    already_cards=[10], ranking_card_ids=[],
+    expect_consistent=True,  # ⚠ 실제로는 무조건부인데 조건부처럼 틀리게 썼지만 못 잡음
+    note=(
+        "[GAP] 무조건부/정기 카드를 조건부로 오기재했는지 보는 규칙(3번)은 "
+        "'이하/이상/급락/상승 + 일/할 때' 패턴만 찾음. '하락할 때'는 '하락'이 "
+        "그 목록에 없어서(급락만 있음) 안 잡힘 — 채권 피난처를 조건부인 것처럼 "
+        "틀리게 설명해도 통과됨."
+    ),
+)
+
 
 def run():
     total = len(TEST_CASES)
@@ -187,6 +394,8 @@ def run():
             print(f"    note: {case['note']}")
         print()
 
+    gap_cases = [c for c in TEST_CASES if "_GAP_" in c["name"]]
+
     print("=" * 60)
     print(f"{passed}/{total} 케이스가 기대대로 동작함")
     if failed_names:
@@ -194,9 +403,17 @@ def run():
     print("=" * 60)
     if passed == total:
         print(
-            "\n10/10 통과 = v3 수정 3건(② 사각지대 / 오귀속 / CARD_FACTS[11] 드리프트)이 "
-            "모두 의도대로 고쳐졌다는 뜻입니다. 교수님이 요구한 '검증기 자체의 자기검증'이 "
-            "이 스크립트로 재현 가능하게 문서화되어 있습니다."
+            f"\n{total}/{total} 통과 = 지금 코드가 '내가 기대한 그대로' 동작한다는 뜻입니다.\n"
+            f"단, 이 중 {len(gap_cases)}개는 이름에 [GAP]이 붙어있고 expect_consistent=True로 "
+            f"되어 있는데, 이건 '검증기가 옳다'가 아니라 '지금 검증기가 이 유형의 오류는 "
+            f"아직 못 잡는다'는 걸 의도적으로 고정해둔 것입니다:\n"
+        )
+        for c in gap_cases:
+            print(f"  - {c['name']}: {c['note']}")
+        print(
+            "\n즉 30개 중 실제로 '이번에 검증기가 정확하다고 확인된' 케이스는 "
+            f"{total - len(gap_cases)}개이고, {len(gap_cases)}개는 다음에 고쳐야 할 "
+            "구체적인 할 일 목록으로 남겨둔 것입니다."
         )
 
 
