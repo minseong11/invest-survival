@@ -361,7 +361,7 @@ def generate_feedback(req: V2FeedbackRequest):
     try:
         msg = client.messages.create(
             model='claude-sonnet-4-6',
-            max_tokens=300,
+            max_tokens=500,
             messages=[{'role': 'user', 'content': build_prompt(req)}]
         )
         return V2FeedbackResponse(feedback=msg.content[0].text)
