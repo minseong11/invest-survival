@@ -4,7 +4,6 @@ import '../models/game_session.dart';
 import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
-import '../models/v1_recommend_result.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
 import '../services/mock_data.dart';
@@ -39,9 +38,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // 이번 라운드 발동 카드 (애니메이션용)
   List<int> _triggeredCardIds = [];
-
-  // V1.5: 백그라운드 로딩
-  Map<int, int> _v1RecommendedCards = {};
 
   // V2: 버튼 눌렀을 때만
   AiState          _aiState             = AiState.idle;
@@ -89,10 +85,23 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
 
-  // AI 추천 카드 ID
+  // 1·75라운드: AI 추천을 제공하지 않는 이유 (v6.1 합의 1번)
+  //  - 1라운드: so_far 시장 데이터가 없어 V2가 판단할 근거가 없음
+  //  - 75라운드: 데이터는 있지만 검증 결과 순위 예측이 맞지 않음 (스피어만 ρ=-0.12)
+  String? get _noAiReason {
+    if (_currentRound1 == 1) {
+      return '아직 시장 데이터가 없어 이 라운드는 AI 추천을 제공하지 않아요';
+    }
+    if (_currentRound1 == 75) {
+      return '검증 결과 이 시점의 추천 정확도가 낮아 AI 추천을 제공하지 않아요';
+    }
+    return null;
+  }
+
+  // AI 추천 카드 ID (V2 결과만 사용. V1.5 사전 추천은 v6.0에서 제거)
   int? get _aiRecommendedCardId {
     if (!_aiRequested || _aiState != AiState.done) return null;
-    return _v2RecommendedCardId ?? _v1RecommendedCards[_currentRound1];
+    return _v2RecommendedCardId;
   }
 
   // 보유카드 데이터
@@ -125,8 +134,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           parent: _assetAnimController,
           curve: Curves.easeOut,
         ));
-
-    _loadV1InBackground();
   }
 
   @override
@@ -134,22 +141,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _autoTimer?.cancel();
     _assetAnimController.dispose();
     super.dispose();
-  }
-
-  // =============================================
-  // V1.5 백그라운드 로딩
-  // =============================================
-  void _loadV1InBackground() {
-    _gameService.getV1Recommendation(
-      sessionId: _session.sessionId,
-    ).then((result) {
-      if (!mounted) return;
-      setState(() {
-        for (final rec in result.recommendations) {
-          _v1RecommendedCards[rec.round] = rec.cardId;
-        }
-      });
-    }).catchError((_) {});
   }
 
   // =============================================
@@ -728,13 +719,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF6B7684))),
               const Spacer(),
-              // AI 피드백 버튼: 항상 표시 (누르면 그때 요청)
-              _buildFeedbackButton(),
-              const SizedBox(width: 6),
-              // AI 버튼: 25·50라운드만 표시
-              if (_canUseV2) _buildAiButton(),
+              // AI 피드백·AI 추천 버튼: 25·50라운드만 표시
+              // (피드백은 V2 추천 응답에 포함되므로, 추천이 없는 1·75라운드에선 의미 없음)
+              if (_canUseV2) ...[
+                _buildFeedbackButton(),
+                const SizedBox(width: 6),
+                _buildAiButton(),
+              ],
             ],
           ),
+
+          // 1·75라운드: 추천을 제공하지 않는 이유 안내
+          if (_noAiReason != null) ...[
+            const SizedBox(height: 8),
+            _buildNoAiNotice(_noAiReason!),
+          ],
 
           // 로딩 바
           if (_aiState == AiState.loading) ...[
@@ -773,6 +772,36 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ),
                 );
               }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 1·75라운드 AI 미제공 안내 ─────────────
+  Widget _buildNoAiNotice(String reason) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F4F6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(Icons.info_outline_rounded,
+                size: 13, color: Color(0xFF6B7684)),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              reason,
+              style: const TextStyle(
+                  fontSize: 10.5, color: Color(0xFF6B7684), height: 1.4),
             ),
           ),
         ],

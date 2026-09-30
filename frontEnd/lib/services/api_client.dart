@@ -21,9 +21,21 @@ class ApiClient {
     }
   }
 
-  Future<dynamic> post(String path, {Map<String, dynamic>? body}) async {
+  // receiveTimeout: 기본 5초보다 오래 걸리는 요청만 따로 지정
+  // (예: 사후 분석 백테스팅은 서버 계산에 약 3.7초 → 여유를 두고 30초)
+  Future<dynamic> post(
+    String path, {
+    Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+  }) async {
     try {
-      final response = await _dio.post(path, data: body);
+      final response = await _dio.post(
+        path,
+        data: body,
+        options: receiveTimeout != null
+            ? Options(receiveTimeout: receiveTimeout)
+            : null,
+      );
       return _parseResponse(response);
     } on DioException catch (e) {
       throw _handleDioError(e);
