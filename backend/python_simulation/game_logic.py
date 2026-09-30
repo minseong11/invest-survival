@@ -43,18 +43,37 @@ def _check_condition(condition, spx_change, ndx_change, aapl_change) -> bool:
     return False
 
 
-def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIAL_ASSET) -> dict:
+def load_price_data(start_date: str) -> dict:
+    """
+    start_date 이후 전 종목 종가를 일반 리스트로 준비한다. (백테스팅처럼 run_game을 반복 호출할 때 한 번만 호출)
+    반환: {'dates': ['2008-09-02', ...], 'close': {ticker: [float, ...]}}
+    """
+    close = {}
+    dates = []
+    for ticker in TICKERS:
+        df = get_price_list(start_date, ticker)
+        close[ticker] = df['Close'].astype(float).tolist() if not df.empty else []
+        if ticker == '^SPX' and not df.empty:
+            dates = df['Date'].dt.strftime('%Y-%m-%d').tolist()
+    return {'dates': dates, 'close': close}
+
+
+def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIAL_ASSET, price_data: dict = None) -> dict:
     """
     게임 실행 메인 함수
     :param start_date: 시작 날짜 (예: "2008-09-02")
     :param card_selections: {라운드: 카드ID} (예: {1: 1, 25: 2, 50: 3, 75: 4})
     :param initial_asset: 초기 자산 (기본 10,000,000)
+    :param price_data: load_price_data(start_date) 결과. None이면 내부에서 로드 (반복 호출 시 미리 넘겨서 재사용)
     """
-    price_data = {ticker: get_price_list(start_date, ticker) for ticker in TICKERS}
+    if price_data is None:
+        price_data = load_price_data(start_date)
 
-    spx_list = price_data['^SPX']
-    if len(spx_list) < 100:
-        raise ValueError(f'SPX 데이터 부족 ({len(spx_list)}개). start_date를 확인하세요.')
+    dates = price_data['dates']
+    closes = price_data['close']
+    spx_closes = closes['^SPX']
+    if len(spx_closes) < 100:
+        raise ValueError(f'SPX 데이터 부족 ({len(spx_closes)}개). start_date를 확인하세요.')
 
     cash = float(initial_asset)
     shares = {t: 0.0 for t in TICKERS}
@@ -63,7 +82,7 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
     rounds_result = []
 
     for i in range(100):
-        if i >= len(spx_list):
+        if i >= len(spx_closes):
             break
 
         round_number = i + 1
@@ -77,44 +96,28 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
                 # BUY_ONCE 즉시 매수
                 if card['type'] == 'BUY_ONCE':
                     ticker = card['ticker']
-                    df = price_data.get(ticker)
-                    if df is not None and len(df) > i:
-                        price = df.iloc[i]['Close']
+                    series = closes.get(ticker)
+                    if series is not None and len(series) > i:
+                        price = series[i]
                         if price > 0:
                             buy_amount = cash * card['ratio']
                             cash -= buy_amount
                             shares[ticker] += buy_amount / price
 
-        # 현재 라운드 주가
-        spx_curr = spx_list.iloc[i]
-        spx_prev = spx_list.iloc[i - 1] if i > 0 else None
+        # 현재 라운드 주가 (범위 밖이면 0.0)
+        def curr(ticker):
+            s = closes[ticker]
+            return s[i] if i < len(s) else 0.0
 
-        def get_curr(ticker):
-            df = price_data[ticker]
-            return df.iloc[i] if i < len(df) else None
+        def prev(ticker):
+            s = closes[ticker]
+            return s[i - 1] if (i > 0 and i < len(s)) else 0.0
 
-        def get_prev(ticker):
-            df = price_data[ticker]
-            return df.iloc[i - 1] if (i > 0 and i < len(df)) else None
+        spx_change  = _calc_change_rate(prev('^SPX'), curr('^SPX'))
+        ndx_change  = _calc_change_rate(prev('^NDX'), curr('^NDX'))
+        aapl_change = _calc_change_rate(prev('AAPL'), curr('AAPL'))
 
-        ndx_curr  = get_curr('^NDX');  ndx_prev  = get_prev('^NDX')
-        aapl_curr = get_curr('AAPL'); aapl_prev = get_prev('AAPL')
-        gld_curr  = get_curr('GLD')
-        uso_curr  = get_curr('USO')
-        tlt_curr  = get_curr('TLT')
-
-        def close(row):
-            return float(row['Close']) if row is not None else 0.0
-
-        spx_change  = _calc_change_rate(close(spx_prev),  close(spx_curr))
-        ndx_change  = _calc_change_rate(close(ndx_prev),  close(ndx_curr))
-        aapl_change = _calc_change_rate(close(aapl_prev), close(aapl_curr))
-
-        prices = {
-            '^SPX': close(spx_curr), '^NDX': close(ndx_curr),
-            'GLD':  close(gld_curr), 'USO':  close(uso_curr),
-            'AAPL': close(aapl_curr),'TLT':  close(tlt_curr),
-        }
+        prices = {t: curr(t) for t in TICKERS}
 
         total_asset = cash + sum(shares[t] * prices[t] for t in TICKERS)
         triggered_card_ids = []
@@ -178,7 +181,7 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
 
         rounds_result.append({
             'round':          round_number,
-            'date':           str(spx_curr['Date'])[:10],
+            'date':           dates[i],
             'roundAsset':     round_asset,
             'returnRate':     return_rate,
             'triggeredCards': triggered_card_ids,
