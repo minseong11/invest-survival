@@ -1,8 +1,8 @@
 import '../models/scenario.dart';
 import '../models/game_session.dart';
 import '../models/action_result.dart';
-import '../models/v1_recommend_result.dart';
 import '../models/v2_recommend_result.dart';
+import '../models/result_analysis.dart';
 import 'api_client.dart';
 
 class GameService {
@@ -41,18 +41,30 @@ class GameService {
     return ActionResult.fromJson(data as Map<String, dynamic>);
   }
 
-  // ── POST /game/recommend/v1 ─────────────────
-  // V1.5 사전 추천: 게임 시작 후 백그라운드 호출
-  // 전체 100라운드 SPX 기준, 4개 라운드 추천
-  // 응답 시간: 약 1~2분 (7,920개 순열 계산)
-  Future<V1RecommendResult> getV1Recommendation({
+  // ※ POST /game/recommend/v1 (V1.5 사전 추천)은 v6.0부터 호출하지 않음
+  //   100라운드 전체 시장을 미리 아는 구조라 게임 중 추천으로 부적절.
+  //   서버 엔드포인트는 존치 (추후 V1.5 성능 검증용)
+
+  // ── POST /game/result/analysis ──────────────
+  // 게임 종료 후 사후 분석 (백테스팅, v6.1)
+  // 7,920개 조합 전수 계산 → 서버 약 3.7초
+  // 실패하면 null 반환 → 결과 화면은 분석 섹션 없이 정상 표시
+  //  - Python 실패 시 서버가 data: null 응답
+  //  - 게임 미종료·목데이터 세션 등은 오류 응답 → 여기서 잡아서 null
+  Future<ResultAnalysis?> getResultAnalysis({
     required String sessionId,
   }) async {
-    final data = await _client.post(
-      '/game/recommend/v1',
-      body: {'sessionId': sessionId},
-    );
-    return V1RecommendResult.fromJson(data as Map<String, dynamic>);
+    try {
+      final data = await _client.post(
+        '/game/result/analysis',
+        body: {'sessionId': sessionId},
+        receiveTimeout: const Duration(seconds: 30),
+      );
+      if (data == null) return null;
+      return ResultAnalysis.fromJson(data as Map<String, dynamic>);
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── POST /game/recommend/v2 ─────────────────
