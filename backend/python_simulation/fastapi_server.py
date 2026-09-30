@@ -170,7 +170,7 @@ class BacktestPlayerResult(BaseModel):
     finalAsset: int
     finalReturnRate: float
     rank: int
-    percentile: float                       # (1 - rank/total) × 100
+    topPercent: float                       # rank/total × 100 (상위 몇 %, 작을수록 좋음)
 
 class BacktestResponse(BaseModel):
     totalCombinations: int

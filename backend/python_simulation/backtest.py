@@ -43,17 +43,21 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
     total = len(results)
     results.sort(key=lambda x: -x[1])          # 최종 자산 내림차순
 
-    player_asset = next(a for c, a, _ in results if c == player_combo)
-    player_rate = next(rt for c, _, rt in results if c == player_combo)
-    # 동점이면 같은 순위 (자신보다 최종 자산이 큰 조합 수 + 1)
-    rank = 1 + sum(1 for _, a, _ in results if a > player_asset)
-    percentile = round((1 - rank / total) * 100, 1)
+    # 순위: 최종 자산이 같으면 같은 순위 (동률 다음 순위는 건너뜀: 1, 1, 1, 4 ...)
+    ranks = []
+    for i, (_, a, _) in enumerate(results):
+        ranks.append(i + 1 if i == 0 or a != results[i - 1][1] else ranks[i - 1])
+
+    player_idx = next(i for i, (c, _, _) in enumerate(results) if c == player_combo)
+    player_asset, player_rate = results[player_idx][1], results[player_idx][2]
+    rank = ranks[player_idx]
+    top_percent = round(rank / total * 100, 1)   # 상위 몇 % (작을수록 좋음)
 
     return {
         'totalCombinations': total,
         'topCombos': [
             {
-                'rank': i + 1,
+                'rank': ranks[i],
                 'cardSelections': _selection_to_json(_to_selection(c)),
                 'finalAsset': a,
                 'finalReturnRate': rt,
@@ -65,7 +69,7 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
             'finalAsset': player_asset,
             'finalReturnRate': player_rate,
             'rank': rank,
-            'percentile': percentile,
+            'topPercent': top_percent,
         },
     }
 
@@ -86,4 +90,4 @@ if __name__ == '__main__':
         print(f'  {t["rank"]}위 {t["cardSelections"]} → {t["finalAsset"]:,}원 ({t["finalReturnRate"]}%)')
     p = res['playerResult']
     print(f'내 조합 {p["cardSelections"]} → {p["finalAsset"]:,}원 ({p["finalReturnRate"]}%), '
-          f'{p["rank"]}위 / 백분위 {p["percentile"]}')
+          f'{p["rank"]}위 / 상위 {p["topPercent"]}%')
