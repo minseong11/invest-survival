@@ -6,6 +6,7 @@ FastAPI AI 추천 서버
   POST /ai/v1/recommend — V1.5 사전 추천 (게임 시작 시)
   POST /ai/v2/recommend — V2 실시간 추천 (25·50라운드)
   POST /ai/v2/feedback  — V2 LLM 자연어 피드백 (25·50라운드, v5.0 신규)
+  POST /ai/analysis/backtest — 사후 분석: 7,920개 조합 백테스팅 (v6.0 신규)
 
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
@@ -13,10 +14,11 @@ import os
 import pickle
 import numpy as np
 from itertools import permutations
-from typing import List
+from typing import Dict, List
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import anthropic
+from backtest import run_backtest
 
 client = anthropic.Anthropic()
 
@@ -71,7 +73,7 @@ FEATURE_COLS_V2 = [
 ]
 
 # ── 앱 초기화 + 모델 로드 ──────────────────────────────────
-app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='5.0')
+app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='6.0')
 
 model_v15 = None
 model_v2  = None
@@ -150,6 +152,30 @@ class V2FeedbackRequest(BaseModel):
 # V2 피드백 응답: Python → Java (v5.0 신규)
 class V2FeedbackResponse(BaseModel):
     feedback: str
+
+# 사후 분석(백테스팅) 요청/응답 (v6.0 신규)
+class BacktestRequest(BaseModel):
+    startDate: str                          # 게임 시작일 (예: "2008-09-02")
+    playerCardSelections: Dict[str, int]    # {"1": 1, "25": 4, "50": 5, "75": 9}
+    topN: int = 3
+
+class BacktestCombo(BaseModel):
+    rank: int
+    cardSelections: Dict[str, int]
+    finalAsset: int
+    finalReturnRate: float
+
+class BacktestPlayerResult(BaseModel):
+    cardSelections: Dict[str, int]
+    finalAsset: int
+    finalReturnRate: float
+    rank: int
+    percentile: float                       # (1 - rank/total) × 100
+
+class BacktestResponse(BaseModel):
+    totalCombinations: int
+    topCombos: List[BacktestCombo]
+    playerResult: BacktestPlayerResult
 
 
 # =============================================
@@ -368,6 +394,24 @@ def generate_feedback(req: V2FeedbackRequest):
     except Exception as e:
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
         return V2FeedbackResponse(feedback='')
+
+
+@app.post('/ai/analysis/backtest', response_model=BacktestResponse)
+def analysis_backtest(req: BacktestRequest):
+    """
+    사후 분석 (v6.0 신규)
+    같은 시작일에서 카드 4장 전체 순열(7,920개)을 실제 게임 로직으로 시뮬레이션하고,
+    플레이어 조합의 최종 자산 순위/백분위를 반환한다.
+    def(동기)로 선언해 FastAPI가 별도 스레드에서 실행 → 계산 중에도 다른 요청이 막히지 않음.
+    """
+    if not 1 <= req.topN <= 20:
+        raise HTTPException(status_code=400, detail='topN은 1~20 사이여야 합니다')
+    try:
+        return run_backtest(req.startDate, req.playerCardSelections, req.topN)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'백테스팅 오류: {str(e)}')
 
 
 # =============================================
