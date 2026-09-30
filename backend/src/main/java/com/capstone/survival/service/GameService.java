@@ -400,6 +400,10 @@ public class GameService {
         GameSession session = sessionRepository.findById(sessionId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다"));
 
+        if ("FINISHED".equals(session.getStatus())) {
+            throw new IllegalArgumentException("이미 종료된 게임입니다");
+        }
+
         Card card = cardRepository.findById(cardId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 카드입니다"));
 
@@ -463,6 +467,9 @@ public class GameService {
                 finalUso, finalAapl, finalTlt,
                 endRound + 1, newAppliedCards, finalTriggerCount
         );
+        if (nextEventRound == null) {   // 마지막 카드 선택(75R) → 100라운드까지 계산 완료
+            session.finish();
+        }
         sessionRepository.save(session);
 
         List<Integer> nextCardOptions = nextEventRound != null
@@ -476,6 +483,92 @@ public class GameService {
         response.put("rounds", rounds);
 
         return response;
+    }
+
+    // =============================================
+    // 사후 분석 (백테스팅) — 게임 종료 후 1회 호출
+    // =============================================
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> analyzeResult(String sessionId) {
+        GameSession session = sessionRepository.findById(sessionId)
+                .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 세션입니다"));
+
+        if (!"FINISHED".equals(session.getStatus())) {
+            throw new IllegalArgumentException("아직 종료되지 않은 게임입니다");
+        }
+
+        List<Integer> appliedCardIds = getAppliedCardIds(session);
+        if (appliedCardIds.size() < CARD_SELECT_ROUNDS.size()) {
+            throw new IllegalArgumentException("카드 선택이 완료되지 않은 게임입니다");
+        }
+
+        // "1,4,5,9" → {"1": 1, "25": 4, "50": 5, "75": 9}
+        Map<String, Integer> playerSelections = new LinkedHashMap<>();
+        for (int i = 0; i < CARD_SELECT_ROUNDS.size(); i++) {
+            playerSelections.put(String.valueOf(CARD_SELECT_ROUNDS.get(i)), appliedCardIds.get(i));
+        }
+
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("startDate", session.getGameStartDate());
+        requestBody.put("playerCardSelections", playerSelections);
+        requestBody.put("topN", 3);
+
+        // 사후 분석은 부가 정보 → 실패해도 결과 화면은 정상 표시되도록 null 반환
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
+
+            ResponseEntity<Map> response = restTemplate.exchange(
+                    aiServerUrl + "/ai/analysis/backtest",
+                    HttpMethod.POST,
+                    entity,
+                    Map.class
+            );
+
+            Map<String, Object> body = response.getBody();
+            if (body == null) return null;
+
+            List<Map<String, Object>> topCombos = new ArrayList<>();
+            for (Map<String, Object> combo : (List<Map<String, Object>>) body.get("topCombos")) {
+                topCombos.add(enrichCombo(combo));
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("totalCombinations", body.get("totalCombinations"));
+            result.put("topCombos", topCombos);
+            result.put("playerResult", enrichCombo((Map<String, Object>) body.get("playerResult")));
+            return result;
+
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // cardSelections {"1":7,"25":3,...} → cards [{round, cardId, cardName}, ...]
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> enrichCombo(Map<String, Object> src) {
+        Map<String, Object> selections = (Map<String, Object>) src.get("cardSelections");
+
+        List<Map<String, Object>> cards = new ArrayList<>();
+        for (Integer round : CARD_SELECT_ROUNDS) {
+            Integer cardId = ((Number) selections.get(String.valueOf(round))).intValue();
+            Map<String, Object> c = new LinkedHashMap<>();
+            c.put("round", round);
+            c.put("cardId", cardId);
+            c.put("cardName", cardRepository.findById(cardId).map(Card::getName).orElse(""));
+            cards.add(c);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("rank", src.get("rank"));
+        out.put("cards", cards);
+        out.put("finalAsset", src.get("finalAsset"));
+        out.put("finalReturnRate", src.get("finalReturnRate"));
+        if (src.containsKey("topPercent")) {
+            out.put("topPercent", src.get("topPercent"));
+        }
+        return out;
     }
 
     // =============================================

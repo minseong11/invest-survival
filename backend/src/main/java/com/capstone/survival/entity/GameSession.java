@@ -82,4 +82,9 @@ public class GameSession {
         this.appliedCards = appliedCards;
         this.triggerCount = triggerCount;
     }
+
+    // 게임 종료 처리 (75라운드 카드 선택 후 100라운드까지 계산이 끝났을 때)
+    public void finish() {
+        this.status = "FINISHED";
+    }
 }
