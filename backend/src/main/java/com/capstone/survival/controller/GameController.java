@@ -81,4 +81,12 @@ public class GameController {
                 gameService.recommendV2(sessionId, currentRound, alreadyCards, candidateCards)
         );
     }
+
+    // POST /game/result/analysis — 사후 분석 (백테스팅), 결과 화면 진입 시 1회 호출
+    // 분석 실패(Python 서버 오류/타임아웃) 시 data=null → 클라이언트는 분석 섹션 미표시
+    @PostMapping("/result/analysis")
+    public ApiResponse<?> analyzeResult(@RequestBody Map<String, String> request) {
+        String sessionId = request.get("sessionId");
+        return ApiResponse.ok(gameService.analyzeResult(sessionId));
+    }
 }
