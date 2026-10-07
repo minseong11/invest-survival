@@ -2,7 +2,9 @@
 Java GameService.calculateRounds() 를 Python으로 포팅
 카드 정의, 조건 체크, 라운드 계산 로직 포함
 """
-from data_loader import get_price_list
+import pandas as pd
+
+from data_loader import get_price_list, load_all
 
 INITIAL_ASSET = 10_000_000
 
@@ -45,16 +47,37 @@ def _check_condition(condition, spx_change, ndx_change, aapl_change) -> bool:
 
 def load_price_data(start_date: str) -> dict:
     """
-    start_date 이후 전 종목 종가를 일반 리스트로 준비한다. (백테스팅처럼 run_game을 반복 호출할 때 한 번만 호출)
-    반환: {'dates': ['2008-09-02', ...], 'close': {ticker: [float, ...]}}
+    start_date 이후 전 종목 종가를 SPX 거래일 기준으로 맞춰 일반 리스트로 준비한다.
+    (백테스팅처럼 run_game을 반복 호출할 때 한 번만 호출)
+
+    정렬 규칙 — i번째 라운드 = SPX의 i번째 거래일
+      - 각 종목은 그 날짜의 종가를 사용
+      - 그날 거래가 없으면(휴장일 차이) 직전 거래일 종가 사용
+      - 그 날짜 이전에 데이터가 전혀 없으면(상장 전) 0.0 → 매수 건너뜀, 등락률 0
+    반환: {'dates': ['2008-09-02', ...], 'close': {ticker: [float, ...]}}  (모든 종목 길이 = SPX 길이)
     """
+    spx = get_price_list(start_date, '^SPX')
+    if spx.empty:
+        return {'dates': [], 'close': {t: [] for t in TICKERS}}
+    spx_dates = pd.DatetimeIndex(spx['Date'])
+
+    all_data = load_all()
     close = {}
-    dates = []
     for ticker in TICKERS:
-        df = get_price_list(start_date, ticker)
-        close[ticker] = df['Close'].astype(float).tolist() if not df.empty else []
-        if ticker == '^SPX' and not df.empty:
-            dates = df['Date'].dt.strftime('%Y-%m-%d').tolist()
+        if ticker == '^SPX':
+            close[ticker] = spx['Close'].astype(float).tolist()
+            continue
+        df = all_data.get(ticker, pd.DataFrame())
+        if df.empty:
+            close[ticker] = [0.0] * len(spx_dates)
+            continue
+        # 전체 기간 데이터에서 SPX 날짜마다 "그 날짜 또는 직전 거래일" 종가를 가져옴 (start_date 이전 값도 사용)
+        series = df.set_index('Date')['Close'].astype(float)
+        series = series[~series.index.duplicated(keep='last')].sort_index()
+        aligned = series.reindex(spx_dates, method='ffill')
+        close[ticker] = aligned.fillna(0.0).tolist()
+
+    dates = spx['Date'].dt.strftime('%Y-%m-%d').tolist()
     return {'dates': dates, 'close': close}
 
 

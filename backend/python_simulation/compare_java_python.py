@@ -6,8 +6,8 @@ compare_java_python.py — Python(run_game)과 Java(/game/validate) 최종 자�
   - Python: float로 계산 (backtest.py 사후 분석 순위의 기준)
   - Java  : 매수/매도마다 long으로 버림 (실제 게임 결과의 기준)
 
-추가로, 종목별 가격 데이터가 SPX와 같은 날짜로 정렬되어 있는지도 점검한다.
-(두 계산 모두 날짜가 아니라 "몇 번째 거래일"(인덱스)로 종목 가격을 맞추기 때문)
+추가로, 종목 가격이 SPX 거래일 기준으로 제대로 정렬되었는지도 점검한다.
+(그날 거래가 없으면 직전 거래일 가격, 상장 전이면 가격 없음)
 
 사용법:
     cd backend/python_simulation
@@ -85,24 +85,38 @@ def count_rank_inversions(py_assets, java_assets):
 
 def check_date_alignment(start_date):
     """
-    종목별로 첫 100거래일의 날짜가 SPX와 같은지 점검.
-    run_game()/Java 모두 i번째 라운드에 각 종목의 i번째 가격을 쓰므로,
-    날짜가 다르면 다른 날의 가격으로 계산된다.
+    load_price_data()가 종목 가격을 SPX 거래일 기준으로 제대로 맞췄는지 첫 100라운드에서 점검.
+    원본 CSV에서 "그 날짜 또는 직전 거래일" 종가를 따로 계산해 load_price_data() 결과와 비교한다.
     """
-    spx = get_price_list(start_date, '^SPX')
-    spx_dates = [str(d)[:10] for d in spx['Date'].iloc[:100]]
+    import pandas as pd
+    from data_loader import load_all
+
+    pdata = load_price_data(start_date)
+    spx_dates = pdata['dates'][:100]
+    all_data = load_all()
     rows = []
     for t in TICKERS:
-        df = get_price_list(start_date, t)
-        if df.empty:
-            rows.append((t, '-', 0, 100, '데이터 없음'))
-            continue
-        dates = [str(d)[:10] for d in df['Date'].iloc[:100]]
-        mismatch = sum(1 for a, b in zip(spx_dates, dates) if a != b) + max(0, 100 - len(dates))
-        first_bad = next((i + 1 for i, (a, b) in enumerate(zip(spx_dates, dates)) if a != b), None)
-        rows.append((t, dates[0], len(dates), mismatch,
-                     f'{first_bad}라운드부터 어긋남' if first_bad else '일치'))
-    return spx_dates[0], rows
+        values = pdata['close'][t][:100]
+        df = all_data.get(t, pd.DataFrame())
+        raw_first = str(df['Date'].iloc[0])[:10] if not df.empty else '-'
+        raw = df.set_index('Date')['Close'].astype(float) if not df.empty else pd.Series(dtype=float)
+        same_day = prev_day = not_listed = mismatch = 0
+        for d, v in zip(spx_dates, values):
+            ts = pd.Timestamp(d)
+            past = raw[raw.index <= ts]
+            if past.empty:
+                expected = 0.0
+                not_listed += 1
+            else:
+                expected = float(past.iloc[-1])
+                if past.index[-1] == ts:
+                    same_day += 1
+                else:
+                    prev_day += 1
+            if abs(expected - v) > 1e-9:
+                mismatch += 1
+        rows.append((t, raw_first, same_day, prev_day, not_listed, mismatch))
+    return spx_dates[0] if spx_dates else '-', rows
 
 
 def run(n, seed):
@@ -217,14 +231,15 @@ def write_report(results, alignment, n, seed):
             lines.append(f'\nJava 호출 오류: {s["errors"]}건')
         lines.append('')
 
-    lines += ['## 3. 종목별 날짜 정렬 점검 (첫 100거래일)', '',
-              'Java·Python 모두 i번째 라운드에 각 종목의 i번째 가격을 사용한다. '
-              '종목의 날짜가 SPX와 다르면 다른 날의 가격으로 계산되며, 이 차이는 Java·Python에 똑같이 들어가므로 위 비교로는 드러나지 않는다.', '']
+    lines += ['## 3. 종목별 날짜 정렬 점검 (첫 100라운드)', '',
+              '라운드 기준 날짜는 SPX 거래일. 각 종목은 그 날짜의 종가, 그날 거래가 없으면 직전 거래일 종가, '
+              '그 이전 데이터가 없으면(상장 전) 0을 사용한다. 원본 CSV로 따로 계산한 값과 load_price_data() 결과를 비교한다.', '']
     for name, (spx_first, rows) in alignment.items():
-        lines += [f'### {name} (SPX 첫 거래일 {spx_first})', '',
-                  '| 종목 | 첫 날짜 | 데이터 수(최대 100) | 날짜 불일치 라운드 수 | 비고 |', '|---|---|---|---|---|']
-        for t, first, cnt, mismatch, note in rows:
-            lines.append(f'| {t} | {first} | {cnt} | {mismatch} | {note} |')
+        bad = sum(r[5] for r in rows)
+        lines += [f'### {name} (SPX 첫 거래일 {spx_first}) — 정렬 검증 {"통과" if bad == 0 else f"실패 {bad}건"}', '',
+                  '| 종목 | 원본 첫 날짜 | 그날 가격 | 직전 거래일 가격 | 상장 전(가격 없음) | 불일치 |', '|---|---|---|---|---|---|']
+        for t, first, same, prev, nl, mm in rows:
+            lines.append(f'| {t} | {first} | {same} | {prev} | {nl} | {mm} |')
         lines.append('')
 
     with open(REPORT_PATH, 'w', encoding='utf-8') as f:
