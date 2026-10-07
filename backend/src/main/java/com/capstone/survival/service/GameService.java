@@ -425,8 +425,9 @@ public class GameService {
         double tltShares = session.getTltShares();
         long cash = session.getCash();
 
-        if ("BUY_ONCE".equals(card.getType())) {
-            double currentClose = getPriceAtRound(session, round, card.getTicker());
+        double currentClose = "BUY_ONCE".equals(card.getType())
+                ? getPriceAtRound(session, round, card.getTicker()) : 0;
+        if ("BUY_ONCE".equals(card.getType()) && currentClose > 0) {   // 상장 전(가격 없음)이면 매수 건너뜀
             double buyAmount = cash * card.getRatio();
             cash -= (long) buyAmount;
             double newShares = buyAmount / currentClose;
@@ -661,12 +662,13 @@ public class GameService {
             double usoShares, double aaplShares, double tltShares,
             List<Integer> appliedCardIds, String triggerCountStr) {
 
+        // 모든 종목을 SPX 거래일 기준으로 정렬 (i번째 = SPX의 i번째 거래일, 상장 전이면 null)
         List<StockPrice> spxList    = loadPriceList(session, "^SPX");
-        List<StockPrice> ndxList    = loadPriceList(session, "^NDX");
-        List<StockPrice> xauusdList = loadPriceList(session, "XAUUSD");
-        List<StockPrice> usoList    = loadPriceList(session, "USO");
-        List<StockPrice> aaplList   = loadPriceList(session, "AAPL");
-        List<StockPrice> tltList    = loadPriceList(session, "TLT");
+        List<StockPrice> ndxList    = loadAlignedPriceList(session, "^NDX", spxList);
+        List<StockPrice> xauusdList = loadAlignedPriceList(session, "XAUUSD", spxList);
+        List<StockPrice> usoList    = loadAlignedPriceList(session, "USO", spxList);
+        List<StockPrice> aaplList   = loadAlignedPriceList(session, "AAPL", spxList);
+        List<StockPrice> tltList    = loadAlignedPriceList(session, "TLT", spxList);
 
         List<Card> appliedCards = cardRepository.findAllById(appliedCardIds);
         appliedCards.sort(Comparator.comparing(Card::getPriority));
@@ -877,10 +879,34 @@ public class GameService {
                 );
     }
 
+    // SPX 거래일 기준으로 종목 가격을 맞춘 리스트
+    // - i번째 = SPX의 i번째 거래일 날짜의 종가
+    // - 그날 거래가 없으면 직전 거래일 가격, 그 이전 데이터가 없으면(상장 전) null
+    private List<StockPrice> loadAlignedPriceList(GameSession session, String ticker, List<StockPrice> spxList) {
+        if ("^SPX".equals(ticker)) return spxList;
+
+        // 시작일 당일에 거래가 없는 경우를 위해 2주 전부터 조회 (직전 거래일 가격 확보)
+        LocalDate from = LocalDate.parse(session.getGameStartDate()).minusDays(14);
+        List<StockPrice> raw = stockPriceRepository
+                .findByTickerAndTradeDateGreaterThanEqualOrderByTradeDate(ticker, from);
+
+        List<StockPrice> aligned = new ArrayList<>(spxList.size());
+        int p = -1;
+        for (StockPrice spx : spxList) {
+            LocalDate d = spx.getTradeDate();
+            while (p + 1 < raw.size() && !raw.get(p + 1).getTradeDate().isAfter(d)) {
+                p++;
+            }
+            aligned.add(p >= 0 ? raw.get(p) : null);
+        }
+        return aligned;
+    }
+
     private double getPriceAtRound(GameSession session, int round, String ticker) {
-        List<StockPrice> list = loadPriceList(session, ticker);
-        if (round - 1 >= list.size()) return 0;
-        return list.get(round - 1).getClose();
+        List<StockPrice> spxList = loadPriceList(session, "^SPX");
+        if (round - 1 >= spxList.size()) return 0;
+        StockPrice p = loadAlignedPriceList(session, ticker, spxList).get(round - 1);
+        return p != null ? p.getClose() : 0;
     }
 
     private List<Integer> getRandomCards(List<Integer> appliedCardIds) {
