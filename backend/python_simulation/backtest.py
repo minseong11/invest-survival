@@ -48,6 +48,16 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
     for i, (_, a, _) in enumerate(results):
         ranks.append(i + 1 if i == 0 or a != results[i - 1][1] else ranks[i - 1])
 
+    # 최종 자산이 같은 조합끼리 묶기 (정렬된 상태라 같은 자산은 연속으로 붙어 있음)
+    # groups: [시작 인덱스, 묶인 조합 수] — 대표 조합은 그룹의 첫 번째 조합
+    groups = []
+    for i, (_, a, _) in enumerate(results):
+        if i == 0 or a != results[i - 1][1]:
+            groups.append([i, 1])
+        else:
+            groups[-1][1] += 1
+    tied_count_by_asset = {results[start][1]: count for start, count in groups}
+
     player_idx = next(i for i, (c, _, _) in enumerate(results) if c == player_combo)
     player_asset, player_rate = results[player_idx][1], results[player_idx][2]
     rank = ranks[player_idx]
@@ -55,20 +65,23 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
 
     return {
         'totalCombinations': total,
+        # 상위 top_n개 "결과"(동점 그룹) — 같은 결과를 내는 조합은 대표 1개 + tiedCount로 묶음
         'topCombos': [
             {
-                'rank': ranks[i],
-                'cardSelections': _selection_to_json(_to_selection(c)),
-                'finalAsset': a,
-                'finalReturnRate': rt,
+                'rank': ranks[start],
+                'tiedCount': count,
+                'cardSelections': _selection_to_json(_to_selection(results[start][0])),
+                'finalAsset': results[start][1],
+                'finalReturnRate': results[start][2],
             }
-            for i, (c, a, rt) in enumerate(results[:top_n])
+            for start, count in groups[:top_n]
         ],
         'playerResult': {
             'cardSelections': _selection_to_json(player),
             'finalAsset': player_asset,
             'finalReturnRate': player_rate,
             'rank': rank,
+            'tiedCount': tied_count_by_asset[player_asset],   # 내 조합 포함, 같은 결과를 내는 조합 수
             'topPercent': top_percent,
         },
     }
@@ -87,7 +100,7 @@ if __name__ == '__main__':
     print(f'실행 시간: {elapsed:.2f}초')
     print('상위 3개:')
     for t in res['topCombos']:
-        print(f'  {t["rank"]}위 {t["cardSelections"]} → {t["finalAsset"]:,}원 ({t["finalReturnRate"]}%)')
+        print(f'  {t["rank"]}위 {t["cardSelections"]} → {t["finalAsset"]:,}원 ({t["finalReturnRate"]}%), 같은 결과 {t["tiedCount"]}개')
     p = res['playerResult']
     print(f'내 조합 {p["cardSelections"]} → {p["finalAsset"]:,}원 ({p["finalReturnRate"]}%), '
-          f'{p["rank"]}위 / 상위 {p["topPercent"]}%')
+          f'{p["rank"]}위 / 상위 {p["topPercent"]}% / 같은 결과 {p["tiedCount"]}개')

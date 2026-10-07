@@ -562,6 +562,7 @@ public class GameService {
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("rank", src.get("rank"));
+        out.put("tiedCount", src.get("tiedCount"));   // 같은 결과를 내는 조합 수 (동점 묶기)
         out.put("cards", cards);
         out.put("finalAsset", src.get("finalAsset"));
         out.put("finalReturnRate", src.get("finalReturnRate"));

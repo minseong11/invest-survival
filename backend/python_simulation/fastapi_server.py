@@ -161,6 +161,7 @@ class BacktestRequest(BaseModel):
 
 class BacktestCombo(BaseModel):
     rank: int
+    tiedCount: int                          # 같은 결과(최종 자산)를 내는 조합 수 (대표 1개만 반환)
     cardSelections: Dict[str, int]
     finalAsset: int
     finalReturnRate: float
@@ -170,6 +171,7 @@ class BacktestPlayerResult(BaseModel):
     finalAsset: int
     finalReturnRate: float
     rank: int
+    tiedCount: int                          # 내 조합 포함, 같은 결과를 내는 조합 수
     topPercent: float                       # rank/total × 100 (상위 몇 %, 작을수록 좋음)
 
 class BacktestResponse(BaseModel):
