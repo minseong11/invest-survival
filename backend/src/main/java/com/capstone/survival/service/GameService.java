@@ -225,9 +225,11 @@ public class GameService {
         requestBody.put("currentRound", currentRound);
         requestBody.put("alreadyCards", alreadyCards);
         requestBody.put("candidateCards", candidateCards);
+        requestBody.put("startDate", session.getGameStartDate()); // 모델 A/B 선택용 (v7.0)
 
         Integer recommendedCardId;
         List<Map<String, Object>> rawRankings;
+        String modelVersion;
 
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -249,6 +251,9 @@ public class GameService {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> r = (List<Map<String, Object>>) body.get("rankings");
             rawRankings = r;
+
+            Object mv = body.get("modelVersion");
+            modelVersion = mv != null ? mv.toString() : "";
 
         } catch (Exception e) {
             throw new RuntimeException("AI 서버에 연결할 수 없습니다: " + e.getMessage());
@@ -278,6 +283,7 @@ public class GameService {
         result.put("recommendedCardName", recommendedCardName);
         result.put("rankings", rankings);
         result.put("feedback", feedback);
+        result.put("modelVersion", modelVersion);
         return result;
     }
 

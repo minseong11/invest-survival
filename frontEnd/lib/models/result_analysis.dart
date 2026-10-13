@@ -2,7 +2,7 @@
 // API 명세서 v6.1 기준
 //
 // 7,920개 카드 조합(11장 중 4장 순열)을 이 시나리오에서 실제로 돌려본 결과.
-// 최종 자산이 같은 조합은 같은 순위 (1, 1, 1, 4 ...)
+// 최종 자산이 같은 조합은 서버가 하나로 묶어 보냄 (tiedCount) → 순위가 1, 7, 8처럼 건너뛸 수 있음
 
 // 조합 안의 카드 한 장 (라운드별)
 class AnalysisCard {
@@ -117,7 +117,12 @@ class ResultAnalysis {
   // 1위 조합 (없으면 null)
   ComboResult? get best => topCombos.isNotEmpty ? topCombos.first : null;
 
-  // 같은 순위가 topCombos 안에 여러 개인지 (공동 순위 표시용)
-  bool isTied(int rank) =>
-      topCombos.where((c) => c.rank == rank).length > 1;
+  // 상위 목록에서 순위가 건너뛰는지 (예: 1위 → 7위)
+  // 서버가 최종 자산이 같은 조합을 하나로 묶어 보내므로(tiedCount) 발생
+  bool get hasSkippedRank {
+    for (var i = 1; i < topCombos.length; i++) {
+      if (topCombos[i].rank != topCombos[i - 1].rank + 1) return true;
+    }
+    return false;
+  }
 }

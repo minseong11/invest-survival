@@ -14,11 +14,14 @@ import os
 import pickle
 import numpy as np
 from itertools import permutations
-from typing import Dict, List
+from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import anthropic
 from backtest import run_backtest
+from verify_feedback import verify_feedback, CARD_FACTS
+from data_loader import load_all
+import pandas as pd
 
 client = anthropic.Anthropic()
 
@@ -26,7 +29,14 @@ client = anthropic.Anthropic()
 BASE_DIR       = os.path.dirname(__file__)
 DATA_DIR       = os.path.join(BASE_DIR, '..', 'data', 'simulation')
 MODEL_V15_PATH = os.path.join(DATA_DIR, 'model_v15.pkl')
-MODEL_V2_PATH  = os.path.join(DATA_DIR, 'model_v2.pkl')
+MODEL_V2_PATH  = os.path.join(DATA_DIR, 'model_v2.pkl')     # 기존 V2 (리먼 구간 학습) — 비교용 보관, 대체 경로
+MODEL_V2_A_PATH = os.path.join(DATA_DIR, 'model_v2_A.pkl')  # 학습 2006.04~2018 전체
+MODEL_V2_B_PATH = os.path.join(DATA_DIR, 'model_v2_B.pkl')  # 리먼 구간(2007.09~2009.10) 제외
+
+# 모델 B를 쓰는 기준: 게임 100라운드 기간이 이 구간과 겹치면 B (train_v2_ab.py와 동일)
+LEHMAN_EXCLUDE_START = pd.Timestamp('2007-09-01')
+LEHMAN_EXCLUDE_END   = pd.Timestamp('2009-10-31')
+GAME_ROUNDS = 100
 
 # ── 카드 정보 ──────────────────────────────────────────────
 ALL_CARD_IDS = list(range(1, 12))
@@ -76,11 +86,13 @@ FEATURE_COLS_V2 = [
 app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='6.0')
 
 model_v15 = None
-model_v2  = None
+model_v2  = None   # 기존 V2
+model_v2_a = None
+model_v2_b = None
 
 @app.on_event('startup')
 def load_models():
-    global model_v15, model_v2
+    global model_v15, model_v2, model_v2_a, model_v2_b
 
     if os.path.exists(MODEL_V15_PATH):
         with open(MODEL_V15_PATH, 'rb') as f:
@@ -95,6 +107,18 @@ def load_models():
         print(f'✅ V2 모델 로드 완료: {MODEL_V2_PATH}')
     else:
         print(f'⚠️  V2 모델 없음: {MODEL_V2_PATH}')
+
+    for label, path in [('A', MODEL_V2_A_PATH), ('B', MODEL_V2_B_PATH)]:
+        if os.path.exists(path):
+            with open(path, 'rb') as f:
+                m = pickle.load(f)
+            if label == 'A':
+                model_v2_a = m
+            else:
+                model_v2_b = m
+            print(f'✅ V2 모델 {label} 로드 완료: {path}')
+        else:
+            print(f'⚠️  V2 모델 {label} 없음: {path}')
 
 
 # =============================================
@@ -124,6 +148,7 @@ class V2RecommendRequest(BaseModel):
     currentRound: int          # 현재 라운드 (25 또는 50)
     alreadyCards: List[int]    # 이미 선택한 카드 ID 목록
     candidateCards: List[int]  # 이번 라운드 후보 카드 ID 목록 (3개)
+    startDate: Optional[str] = None  # 게임 시작일 (v7.0) — 모델 A/B 선택용. 없으면 모델 A
 
 # V2 응답: Python → Java
 class V2RankingItem(BaseModel):
@@ -134,6 +159,7 @@ class V2RankingItem(BaseModel):
 class V2RecommendResponse(BaseModel):
     recommendedCardId: int
     rankings: List[V2RankingItem]
+    modelVersion: str = ''     # 추천에 사용한 모델 (v2_A / v2_B / v2_legacy)
 
 # V2 피드백 요청: Java → Python (v5.0 신규)
 class V2FeedbackRankingItem(BaseModel):
@@ -152,6 +178,7 @@ class V2FeedbackRequest(BaseModel):
 # V2 피드백 응답: Python → Java (v5.0 신규)
 class V2FeedbackResponse(BaseModel):
     feedback: str
+    verified: Optional[bool] = None   # (v7.0) True: LLM 문장 검증 통과 / False: 검증 실패 → 대체 문장 / None: LLM 실패
 
 # 사후 분석(백테스팅) 요청/응답 (v6.0 신규)
 class BacktestRequest(BaseModel):
@@ -280,12 +307,44 @@ def build_prompt(req: V2FeedbackRequest) -> str:
 # 엔드포인트
 # =============================================
 
+def _game_end_date(start_date: str) -> Optional[pd.Timestamp]:
+    """시작일 기준 100번째 SPX 거래일 (게임 마지막 라운드 날짜)"""
+    spx = load_all().get('^SPX', pd.DataFrame())
+    if spx.empty:
+        return None
+    dates = pd.DatetimeIndex(spx['Date']).sort_values()
+    i = dates.searchsorted(pd.Timestamp(start_date), side='left') + (GAME_ROUNDS - 1)
+    return dates[i] if i < len(dates) else dates[-1]
+
+
+def select_v2_model(start_date: Optional[str]):
+    """
+    게임 기간에 맞는 V2 모델 선택 → (모델, 버전 이름)
+      - 게임 기간이 리먼 제외 구간과 겹치면 모델 B (그 구간을 학습하지 않은 모델)
+      - 그 외(닷컴·코로나 등)는 모델 A
+      - A/B 파일이 없으면 기존 model_v2.pkl로 대체
+    """
+    use_b = False
+    if start_date:
+        start = pd.Timestamp(start_date)
+        end = _game_end_date(start_date) or start
+        use_b = start <= LEHMAN_EXCLUDE_END and end >= LEHMAN_EXCLUDE_START
+
+    if use_b and model_v2_b is not None:
+        return model_v2_b, 'v2_B'
+    if not use_b and model_v2_a is not None:
+        return model_v2_a, 'v2_A'
+    return model_v2, 'v2_legacy'
+
+
 @app.get('/')
 def health_check():
     return {
         'status': 'ok',
         'v15_model': model_v15 is not None,
         'v2_model':  model_v2  is not None,
+        'v2_model_A': model_v2_a is not None,
+        'v2_model_B': model_v2_b is not None,
     }
 
 
@@ -332,7 +391,8 @@ def recommend_v2(req: V2RecommendRequest):
     V2 실시간 추천
     현재까지 시장 지표 + 이미 선택한 카드 → 후보 카드 중 최적 추천
     """
-    if model_v2 is None:
+    model, model_version = select_v2_model(req.startDate)
+    if model is None:
         raise HTTPException(status_code=503, detail='V2 모델이 로드되지 않았습니다')
 
     if req.currentRound not in [25, 50]:
@@ -353,7 +413,7 @@ def recommend_v2(req: V2RecommendRequest):
             for card_id in req.candidateCards
         ]
 
-        predictions = model_v2.predict(features)
+        predictions = model.predict(features)
 
         ranked = sorted(
             zip(req.candidateCards, predictions),
@@ -371,11 +431,36 @@ def recommend_v2(req: V2RecommendRequest):
 
         return V2RecommendResponse(
             recommendedCardId=rankings[0].cardId,
-            rankings=rankings
+            rankings=rankings,
+            modelVersion=model_version,
         )
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'V2 추천 오류: {str(e)}')
+
+
+def build_fallback_feedback(req: V2FeedbackRequest) -> str:
+    """
+    검증 실패 시 대체 피드백 (v7.0)
+    LLM 문장을 쓰지 않고, 확인된 정보만으로 만든다.
+      - 카드 규칙: verify_feedback.CARD_FACTS (검증기와 같은 원천)
+      - 순위·기여도: V2 출력값 그대로
+    """
+    ranked = sorted(req.rankings, key=lambda r: r.rank)
+    if not ranked:
+        return ''
+    top = ranked[0]
+    top_fact = CARD_FACTS.get(top.cardId)
+    top_name = top_fact.name if top_fact else CARD_NAMES.get(top.cardId, f'카드{top.cardId}')
+    lines = [
+        f'AI 추천: {top_name} — {top_fact.condition_desc if top_fact else ""}',
+        '후보 카드 예상 기여도: ' + ', '.join(
+            f'{CARD_FACTS[r.cardId].name if r.cardId in CARD_FACTS else r.cardId} {r.contribution:+.2f}%'
+            for r in ranked
+        ),
+        '(AI 설명을 검증하지 못해 확인된 카드 규칙과 예측값만 표시해요)',
+    ]
+    return '\n'.join(lines)
 
 
 @app.post('/ai/v2/feedback', response_model=V2FeedbackResponse)
@@ -392,10 +477,26 @@ def generate_feedback(req: V2FeedbackRequest):
             max_tokens=500,
             messages=[{'role': 'user', 'content': build_prompt(req)}]
         )
-        return V2FeedbackResponse(feedback=msg.content[0].text)
+        text = msg.content[0].text
     except Exception as e:
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
-        return V2FeedbackResponse(feedback='')
+        return V2FeedbackResponse(feedback='', verified=None)
+
+    # (v7.0) 사용자에게 보내기 전에 규칙 기반 검증기로 검사
+    #   통과 → LLM 문장 그대로 / 실패 → 확인된 정보(CARD_FACTS·V2 순위)만으로 만든 대체 문장
+    result = verify_feedback(
+        text,
+        already_cards=req.alreadyCards,
+        ranking_card_ids=[r.cardId for r in req.rankings],
+    )
+    if result.consistent:
+        return V2FeedbackResponse(feedback=text, verified=True)
+
+    print('⚠️  LLM 피드백 검증 실패 → 대체 문장으로 응답')
+    print(f'    원문: {text}')
+    for issue in result.issues:
+        print(f'    - {issue}')
+    return V2FeedbackResponse(feedback=build_fallback_feedback(req), verified=False)
 
 
 @app.post('/ai/analysis/backtest', response_model=BacktestResponse)
