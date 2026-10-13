@@ -1,14 +1,15 @@
 """
 backtest.py — 사후 분석용 백테스팅
-같은 시작일에서 카드 4장(1/25/50/75라운드) 전체 순열(11×10×9×8 = 7,920개)을 실제 게임 로직(run_game)으로
+같은 시작일에서 카드 4장(1/25/50/75라운드) 전체 순열을 실제 게임 로직(run_game)으로
 돌려 최종 자산 기준 순위를 매기고, 플레이어 조합의 순위/백분위를 계산한다.
+조합은 시작일에 사용 가능한 카드(상장된 종목)로만 만든다.
+  - 11장 모두 사용 가능: 11×10×9×8 = 7,920개 (리먼·코로나)
+  -  9장 사용 가능     :  9×8×7×6 = 3,024개 (닷컴 — 원유 베팅·채권 피난처 제외)
 """
 import time
 from itertools import permutations
 
-from game_logic import run_game, load_price_data, CARDS, CARD_SELECT_ROUNDS
-
-ALL_CARD_IDS = sorted(CARDS.keys())
+from game_logic import run_game, load_price_data, available_card_ids, CARDS, CARD_SELECT_ROUNDS
 
 
 def _to_selection(combo) -> dict:
@@ -33,10 +34,13 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
     if len(set(player_combo)) != 4 or any(c not in CARDS for c in player_combo):
         raise ValueError(f'유효하지 않은 카드 조합입니다: {player_combo}')
 
-    price_data = load_price_data(start_date)   # 한 번만 로드해서 7,920번 재사용
+    price_data = load_price_data(start_date)   # 한 번만 로드해서 모든 조합에 재사용
+    card_pool = available_card_ids(price_data)  # 시작일에 사용 가능한 카드 (상장 전 종목 제외)
+    if any(c not in card_pool for c in player_combo):
+        raise ValueError(f'이 시작일에는 사용할 수 없는 카드가 포함되어 있습니다: {player_combo}')
 
     results = []   # (combo, final_asset, final_return_rate)
-    for combo in permutations(ALL_CARD_IDS, 4):
+    for combo in permutations(card_pool, 4):
         r = run_game(start_date, _to_selection(combo), price_data=price_data)
         results.append((combo, r['final_asset'], r['final_return_rate']))
 
@@ -65,6 +69,7 @@ def run_backtest(start_date: str, player_selections: dict, top_n: int = 3) -> di
 
     return {
         'totalCombinations': total,
+        'cardPoolSize': len(card_pool),   # 사용 가능한 카드 수 (화면 문구 "N장 전체 조합 기준"용)
         # 상위 top_n개 "결과"(동점 그룹) — 같은 결과를 내는 조합은 대표 1개 + tiedCount로 묶음
         'topCombos': [
             {
@@ -96,7 +101,7 @@ if __name__ == '__main__':
     res = run_backtest(start_date, player, top_n=3)
     elapsed = time.time() - t0
 
-    print(f'전체 조합: {res["totalCombinations"]}')
+    print(f'전체 조합: {res["totalCombinations"]} (사용 가능 카드 {res["cardPoolSize"]}장)')
     print(f'실행 시간: {elapsed:.2f}초')
     print('상위 3개:')
     for t in res['topCombos']:

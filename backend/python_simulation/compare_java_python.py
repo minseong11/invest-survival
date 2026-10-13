@@ -25,7 +25,7 @@ from itertools import permutations
 import requests
 
 from data_loader import get_price_list
-from game_logic import run_game, load_price_data, CARDS, CARD_SELECT_ROUNDS, TICKERS
+from game_logic import run_game, load_price_data, available_card_ids, CARDS, CARD_SELECT_ROUNDS, TICKERS
 
 JAVA_URL = 'http://localhost:8080/game/validate'
 
@@ -105,7 +105,7 @@ def check_date_alignment(start_date):
             ts = pd.Timestamp(d)
             past = raw[raw.index <= ts]
             if past.empty:
-                expected = 0.0
+                expected = None
                 not_listed += 1
             else:
                 expected = float(past.iloc[-1])
@@ -113,7 +113,10 @@ def check_date_alignment(start_date):
                     same_day += 1
                 else:
                     prev_day += 1
-            if abs(expected - v) > 1e-9:
+            if expected is None or v is None:
+                if expected is not v:          # 한쪽만 None이면 불일치 (결측을 0으로 바꾸면 여기서 잡힘)
+                    mismatch += 1
+            elif abs(expected - v) > 1e-9:
                 mismatch += 1
         rows.append((t, raw_first, same_day, prev_day, not_listed, mismatch))
     return spx_dates[0] if spx_dates else '-', rows
@@ -137,7 +140,10 @@ def run(n, seed):
         alignment[name] = check_date_alignment(start_date)
 
         price_data = load_price_data(start_date)
-        combos = all_combos if n >= len(all_combos) else rng.sample(all_combos, n)
+        pool = available_card_ids(price_data)            # 상장 전 종목 카드 제외
+        scenario_combos = list(permutations(pool, 4))
+        combos = scenario_combos if n >= len(scenario_combos) else rng.sample(scenario_combos, n)
+        print(f'  사용 가능 카드 {len(pool)}장, 조합 {len(scenario_combos)}개 중 {len(combos)}개 비교')
 
         rows = []   # (combo, py_asset, java_asset, diff, rel_pct, first_div_round)
         errors = 0
@@ -233,7 +239,7 @@ def write_report(results, alignment, n, seed):
 
     lines += ['## 3. 종목별 날짜 정렬 점검 (첫 100라운드)', '',
               '라운드 기준 날짜는 SPX 거래일. 각 종목은 그 날짜의 종가, 그날 거래가 없으면 직전 거래일 종가, '
-              '그 이전 데이터가 없으면(상장 전) 0을 사용한다. 원본 CSV로 따로 계산한 값과 load_price_data() 결과를 비교한다.', '']
+              '그 이전 데이터가 없으면(상장 전) 가격 없음(None)으로 둔다(0으로 바꾸지 않음). 원본 CSV로 따로 계산한 값과 load_price_data() 결과를 비교한다.', '']
     for name, (spx_first, rows) in alignment.items():
         bad = sum(r[5] for r in rows)
         lines += [f'### {name} (SPX 첫 거래일 {spx_first}) — 정렬 검증 {"통과" if bad == 0 else f"실패 {bad}건"}', '',
