@@ -6,7 +6,7 @@ FastAPI AI 추천 서버
   POST /ai/v1/recommend — V1.5 사전 추천 (게임 시작 시)
   POST /ai/v2/recommend — V2 실시간 추천 (25·50라운드)
   POST /ai/v2/feedback  — V2 LLM 자연어 피드백 (25·50라운드, v5.0 신규)
-  POST /ai/analysis/backtest — 사후 분석: 7,920개 조합 백테스팅 (v6.0 신규)
+  POST /ai/analysis/backtest — 사후 분석: 전체 조합 백테스팅 (v6.0 신규, 사용 가능 카드 기준)
 
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
@@ -203,6 +203,7 @@ class BacktestPlayerResult(BaseModel):
 
 class BacktestResponse(BaseModel):
     totalCombinations: int
+    cardPoolSize: int                       # 시작일에 사용 가능한 카드 수 (상장 전 종목 카드 제외)
     topCombos: List[BacktestCombo]
     playerResult: BacktestPlayerResult
 
@@ -503,7 +504,7 @@ def generate_feedback(req: V2FeedbackRequest):
 def analysis_backtest(req: BacktestRequest):
     """
     사후 분석 (v6.0 신규)
-    같은 시작일에서 카드 4장 전체 순열(7,920개)을 실제 게임 로직으로 시뮬레이션하고,
+    같은 시작일에서 사용 가능한 카드로 만든 4장 전체 순열을 실제 게임 로직으로 시뮬레이션하고,
     플레이어 조합의 최종 자산 순위/백분위를 반환한다.
     def(동기)로 선언해 FastAPI가 별도 스레드에서 실행 → 계산 중에도 다른 요청이 막히지 않음.
     """

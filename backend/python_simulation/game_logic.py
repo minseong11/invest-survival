@@ -26,22 +26,36 @@ TICKERS = ['^SPX', '^NDX', 'GLD', 'USO', 'AAPL', 'TLT']
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
 
 
-def _calc_change_rate(prev_close, curr_close) -> float:
-    if prev_close is None or prev_close <= 0:
-        return 0.0
+def _calc_change_rate(prev_close, curr_close):
+    """
+    전일 대비 등락률(%). 가격이 없으면(None) 등락률도 None — 결측을 0%로 취급하지 않는다.
+    """
+    if prev_close is None or curr_close is None or prev_close <= 0:
+        return None
     rate = (curr_close - prev_close) / prev_close * 100
     return round(rate, 2)
 
 
 def _check_condition(condition, spx_change, ndx_change, aapl_change) -> bool:
+    """조건에 쓰이는 등락률이 None(가격 없음)이면 발동하지 않는다."""
     if condition is None:
         return False
-    if condition == 'SPX_CHANGE <= -3':    return spx_change  <= -3
-    elif condition == 'SPX_CHANGE <= -5':  return spx_change  <= -5
-    elif condition == 'SPX_CHANGE >= 3':   return spx_change  >= 3
-    elif condition == 'NDX_CHANGE >= 2':   return ndx_change  >= 2
-    elif condition == 'NDX_CHANGE <= -4':  return ndx_change  <= -4
-    elif condition == 'AAPL_CHANGE <= -5': return aapl_change <= -5
+    if condition.startswith('SPX_'):
+        change = spx_change
+    elif condition.startswith('NDX_'):
+        change = ndx_change
+    elif condition.startswith('AAPL_'):
+        change = aapl_change
+    else:
+        return False
+    if change is None:
+        return False
+    if condition == 'SPX_CHANGE <= -3':    return change <= -3
+    elif condition == 'SPX_CHANGE <= -5':  return change <= -5
+    elif condition == 'SPX_CHANGE >= 3':   return change >= 3
+    elif condition == 'NDX_CHANGE >= 2':   return change >= 2
+    elif condition == 'NDX_CHANGE <= -4':  return change <= -4
+    elif condition == 'AAPL_CHANGE <= -5': return change <= -5
     return False
 
 
@@ -53,8 +67,8 @@ def load_price_data(start_date: str) -> dict:
     정렬 규칙 — i번째 라운드 = SPX의 i번째 거래일
       - 각 종목은 그 날짜의 종가를 사용
       - 그날 거래가 없으면(휴장일 차이) 직전 거래일 종가 사용
-      - 그 날짜 이전에 데이터가 전혀 없으면(상장 전) 0.0 → 매수 건너뜀, 등락률 0
-    반환: {'dates': ['2008-09-02', ...], 'close': {ticker: [float, ...]}}  (모든 종목 길이 = SPX 길이)
+      - 그 날짜 이전에 데이터가 전혀 없으면(상장 전) None (가격 없음 — 0과 구분)
+    반환: {'dates': ['2008-09-02', ...], 'close': {ticker: [float 또는 None, ...]}}  (모든 종목 길이 = SPX 길이)
     """
     spx = get_price_list(start_date, '^SPX')
     if spx.empty:
@@ -69,16 +83,28 @@ def load_price_data(start_date: str) -> dict:
             continue
         df = all_data.get(ticker, pd.DataFrame())
         if df.empty:
-            close[ticker] = [0.0] * len(spx_dates)
+            close[ticker] = [None] * len(spx_dates)
             continue
         # 전체 기간 데이터에서 SPX 날짜마다 "그 날짜 또는 직전 거래일" 종가를 가져옴 (start_date 이전 값도 사용)
         series = df.set_index('Date')['Close'].astype(float)
         series = series[~series.index.duplicated(keep='last')].sort_index()
         aligned = series.reindex(spx_dates, method='ffill')
-        close[ticker] = aligned.fillna(0.0).tolist()
+        close[ticker] = [None if pd.isna(v) else float(v) for v in aligned]
 
     dates = spx['Date'].dt.strftime('%Y-%m-%d').tolist()
     return {'dates': dates, 'close': close}
+
+
+def available_card_ids(price_data: dict) -> list:
+    """
+    시작일(1라운드)에 종목 가격이 있는 카드만 사용 가능.
+    상장 전 종목의 카드는 해당 시나리오에서 제시하지 않는다 (게임·사후 분석 공통 규칙).
+    """
+    closes = price_data['close']
+    return sorted(
+        cid for cid, card in CARDS.items()
+        if closes.get(card['ticker']) and closes[card['ticker']][0] is not None
+    )
 
 
 def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIAL_ASSET, price_data: dict = None) -> dict:
@@ -97,6 +123,13 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
     spx_closes = closes['^SPX']
     if len(spx_closes) < 100:
         raise ValueError(f'SPX 데이터 부족 ({len(spx_closes)}개). start_date를 확인하세요.')
+
+    # 상장 전 종목 카드는 선택할 수 없음
+    available = set(available_card_ids(price_data))
+    unavailable = [c for c in card_selections.values() if c not in available]
+    if unavailable:
+        names = ', '.join(CARDS[c]['name'] if c in CARDS else str(c) for c in unavailable)
+        raise ValueError(f'이 시작일에는 사용할 수 없는 카드입니다 (상장 전 종목): {names}')
 
     cash = float(initial_asset)
     shares = {t: 0.0 for t in TICKERS}
@@ -122,19 +155,19 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
                     series = closes.get(ticker)
                     if series is not None and len(series) > i:
                         price = series[i]
-                        if price > 0:
+                        if price is not None and price > 0:
                             buy_amount = cash * card['ratio']
                             cash -= buy_amount
                             shares[ticker] += buy_amount / price
 
-        # 현재 라운드 주가 (범위 밖이면 0.0)
+        # 현재 라운드 주가 (가격 없음·범위 밖이면 None)
         def curr(ticker):
             s = closes[ticker]
-            return s[i] if i < len(s) else 0.0
+            return s[i] if i < len(s) else None
 
         def prev(ticker):
             s = closes[ticker]
-            return s[i - 1] if (i > 0 and i < len(s)) else 0.0
+            return s[i - 1] if (i > 0 and i < len(s)) else None
 
         spx_change  = _calc_change_rate(prev('^SPX'), curr('^SPX'))
         ndx_change  = _calc_change_rate(prev('^NDX'), curr('^NDX'))
@@ -142,7 +175,11 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
 
         prices = {t: curr(t) for t in TICKERS}
 
-        total_asset = cash + sum(shares[t] * prices[t] for t in TICKERS)
+        def holdings_value():
+            # 가격이 없는 종목은 보유량도 0이므로 평가에서 제외
+            return sum(shares[t] * prices[t] for t in TICKERS if prices[t] is not None)
+
+        total_asset = cash + holdings_value()
         triggered_card_ids = []
 
         # 파산 방지: 총자산이 initialAsset의 1% 이하면 카드 발동 중지
@@ -176,7 +213,7 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
 
                 # 매도 처리
                 if card['type'] == 'SELL_ON_CONDITION':
-                    if card['ticker'] == '^SPX' and prices['^SPX'] > 0:
+                    if card['ticker'] == '^SPX' and prices['^SPX'] is not None and prices['^SPX'] > 0:
                         sell_shares = shares['^SPX'] * card['ratio']
                         shares['^SPX'] -= sell_shares
                         cash += sell_shares * prices['^SPX']
@@ -189,8 +226,8 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
 
                 # 매수 처리
                 amount = cash * card['ratio']
-                price  = prices.get(card['ticker'], 0.0)
-                if price <= 0:
+                price  = prices.get(card['ticker'])
+                if price is None or price <= 0:
                     continue
 
                 cash -= amount
@@ -198,7 +235,7 @@ def run_game(start_date: str, card_selections: dict, initial_asset: int = INITIA
                 triggered_card_ids.append(card['id'])
 
         # 자산 재계산
-        total_asset = cash + sum(shares[t] * prices[t] for t in TICKERS)
+        total_asset = cash + holdings_value()
         round_asset = int(total_asset)
         return_rate = round((total_asset - initial_asset) / initial_asset * 100, 2)
 

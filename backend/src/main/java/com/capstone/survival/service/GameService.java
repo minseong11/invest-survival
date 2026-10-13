@@ -81,7 +81,7 @@ public class GameService {
         response.put("totalRounds", 100);
         response.put("initialAsset", INITIAL_ASSET);
         response.put("cardSelectRounds", CARD_SELECT_ROUNDS);
-        response.put("firstCardOptions", getRandomCards(new ArrayList<>()));
+        response.put("firstCardOptions", getRandomCards(new ArrayList<>(), getUnavailableCardIds(session)));
         response.put("rounds", List.of(firstRound));
 
         return response;
@@ -413,6 +413,11 @@ public class GameService {
         Card card = cardRepository.findById(cardId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 카드입니다"));
 
+        Set<Integer> unavailableCardIds = getUnavailableCardIds(session);
+        if (unavailableCardIds.contains(cardId)) {
+            throw new IllegalArgumentException("이 시나리오에서는 사용할 수 없는 카드입니다 (상장 전 종목)");
+        }
+
         List<Integer> appliedCardIds = getAppliedCardIds(session);
         if (appliedCardIds.contains(cardId)) {
             throw new IllegalArgumentException("이미 선택한 카드입니다");
@@ -480,7 +485,7 @@ public class GameService {
         sessionRepository.save(session);
 
         List<Integer> nextCardOptions = nextEventRound != null
-                ? getRandomCards(appliedCardIds)
+                ? getRandomCards(appliedCardIds, unavailableCardIds)
                 : null;
 
         Map<String, Object> response = new LinkedHashMap<>();
@@ -543,6 +548,7 @@ public class GameService {
 
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("totalCombinations", body.get("totalCombinations"));
+            result.put("cardPoolSize", body.get("cardPoolSize"));   // 사용 가능 카드 수 (상장 전 종목 제외)
             result.put("topCombos", topCombos);
             result.put("playerResult", enrichCombo((Map<String, Object>) body.get("playerResult")));
             return result;
@@ -587,6 +593,13 @@ public class GameService {
         GameSession session = new GameSession(
                 "validate", 1, "lehman", "^SPX", startDate
         );
+
+        Set<Integer> unavailableCardIds = getUnavailableCardIds(session);
+        for (Integer cid : cardSelections.values()) {
+            if (unavailableCardIds.contains(cid)) {
+                throw new IllegalArgumentException("이 시작일에는 사용할 수 없는 카드입니다 (상장 전 종목): " + cid);
+            }
+        }
 
         long cash = INITIAL_ASSET;
         double spxShares = 0, ndxShares = 0, xauusdShares = 0;
@@ -698,9 +711,14 @@ public class GameService {
             StockPrice aaplPrev     = (i > 0 && i < aaplList.size()) ? aaplList.get(i - 1) : null;
             StockPrice tltCurrent   = i < tltList.size()    ? tltList.get(i)    : null;
 
-            double spxChangeRate  = calcChangeRate(spxPrev, spxCurrent);
-            double ndxChangeRate  = calcChangeRate(ndxPrev, ndxCurrent);
-            double aaplChangeRate = calcChangeRate(aaplPrev, aaplCurrent);
+            // 조건 판정용 등락률: 가격이 없으면 null (결측을 0%로 취급하지 않음)
+            Double spxChange  = changeRateOrNull(spxPrev, spxCurrent);
+            Double ndxChange  = changeRateOrNull(ndxPrev, ndxCurrent);
+            Double aaplChange = changeRateOrNull(aaplPrev, aaplCurrent);
+            // 화면 표시용 등락률 (기존 응답 형식 유지: 계산할 수 없으면 0.0)
+            double spxChangeRate  = spxChange  != null ? spxChange  : 0.0;
+            double ndxChangeRate  = ndxChange  != null ? ndxChange  : 0.0;
+            double aaplChangeRate = aaplChange != null ? aaplChange : 0.0;
 
             double spxValue    = spxShares    * spxCurrent.getClose();
             double ndxValue    = ndxCurrent    != null ? ndxShares    * ndxCurrent.getClose()    : 0;
@@ -720,9 +738,9 @@ public class GameService {
                     if ("BUY_SPLIT".equals(card.getType())) {
                         triggered = true;
                     } else if ("BUY_ON_CONDITION".equals(card.getType())) {
-                        triggered = checkCondition(card.getCondition(), spxChangeRate, ndxChangeRate, aaplChangeRate);
+                        triggered = checkCondition(card.getCondition(), spxChange, ndxChange, aaplChange);
                     } else if ("SELL_ON_CONDITION".equals(card.getType())) {
-                        triggered = checkCondition(card.getCondition(), spxChangeRate, ndxChangeRate, aaplChangeRate);
+                        triggered = checkCondition(card.getCondition(), spxChange, ndxChange, aaplChange);
                     } else if ("BUY_EVERY_N".equals(card.getType())) {
                         triggered = (roundNumber % 5 == 0);
                     }
@@ -845,17 +863,26 @@ public class GameService {
     // =============================================
     // 유틸 메서드
     // =============================================
+    // 조건에 쓰이는 등락률이 null(가격 없음)이면 발동하지 않음
     private boolean checkCondition(String condition,
-                                   double spxChangeRate, double ndxChangeRate, double aaplChangeRate) {
+                                   Double spxChange, Double ndxChange, Double aaplChange) {
+        if (condition == null) return false;
         return switch (condition) {
-            case "SPX_CHANGE <= -3"  -> spxChangeRate  <= -3;
-            case "SPX_CHANGE <= -5"  -> spxChangeRate  <= -5;
-            case "SPX_CHANGE >= 3"   -> spxChangeRate  >= 3;
-            case "NDX_CHANGE >= 2"   -> ndxChangeRate  >= 2;
-            case "NDX_CHANGE <= -4"  -> ndxChangeRate  <= -4;
-            case "AAPL_CHANGE <= -5" -> aaplChangeRate <= -5;
+            case "SPX_CHANGE <= -3"  -> spxChange  != null && spxChange  <= -3;
+            case "SPX_CHANGE <= -5"  -> spxChange  != null && spxChange  <= -5;
+            case "SPX_CHANGE >= 3"   -> spxChange  != null && spxChange  >= 3;
+            case "NDX_CHANGE >= 2"   -> ndxChange  != null && ndxChange  >= 2;
+            case "NDX_CHANGE <= -4"  -> ndxChange  != null && ndxChange  <= -4;
+            case "AAPL_CHANGE <= -5" -> aaplChange != null && aaplChange <= -5;
             default -> false;
         };
+    }
+
+    // 등락률(%) — 전일 또는 당일 가격이 없으면 null
+    private Double changeRateOrNull(StockPrice prev, StockPrice current) {
+        if (prev == null || current == null || prev.getClose() <= 0) return null;
+        double rate = (current.getClose() - prev.getClose()) / prev.getClose() * 100;
+        return Math.round(rate * 100.0) / 100.0;
     }
 
     private double calcChangeRate(StockPrice prev, StockPrice current) {
@@ -915,9 +942,29 @@ public class GameService {
         return p != null ? p.getClose() : 0;
     }
 
-    private List<Integer> getRandomCards(List<Integer> appliedCardIds) {
+    // 시작일(1라운드)에 종목 가격이 없는 카드 = 상장 전 종목 카드 → 이 세션에서 사용 불가
+    // (Python game_logic.available_card_ids()와 같은 규칙)
+    private Set<Integer> getUnavailableCardIds(GameSession session) {
+        Set<Integer> unavailable = new HashSet<>();
+        List<StockPrice> spxList = loadPriceList(session, "^SPX");
+        if (spxList.isEmpty()) return unavailable;
+        LocalDate firstDate = spxList.get(0).getTradeDate();
+
+        Map<String, Boolean> listedByTicker = new HashMap<>();
+        for (Card card : cardRepository.findAll()) {
+            String ticker = card.getTicker();
+            boolean listed = "^SPX".equals(ticker) || listedByTicker.computeIfAbsent(ticker, t ->
+                    !stockPriceRepository.findByTickerAndTradeDateBetweenOrderByTradeDate(
+                            t, firstDate.minusDays(14), firstDate).isEmpty());
+            if (!listed) unavailable.add(card.getId());
+        }
+        return unavailable;
+    }
+
+    private List<Integer> getRandomCards(List<Integer> appliedCardIds, Set<Integer> unavailableCardIds) {
         List<Integer> available = new ArrayList<>(ALL_CARD_IDS);
         available.removeAll(appliedCardIds);
+        available.removeAll(unavailableCardIds);   // 상장 전 종목 카드는 제시하지 않음
         Collections.shuffle(available);
         int count = Math.min(3, available.size());
         return new ArrayList<>(available.subList(0, count));
