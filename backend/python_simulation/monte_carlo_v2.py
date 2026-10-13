@@ -30,7 +30,7 @@ import tempfile
 import numpy as np
 import multiprocessing as mp
 from datetime import datetime, timedelta
-from game_logic import run_game, CARDS
+from game_logic import run_game, load_price_data, CARDS
 from data_loader import get_price_list
 
 OUTPUT_DIR  = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
@@ -39,8 +39,13 @@ OUTPUT_PATH = os.path.join(OUTPUT_DIR, 'training_data_v2.csv')
 
 ALL_CARD_IDS       = list(CARDS.keys())   # [1, 2, ..., 11]
 CARD_SELECT_ROUNDS = [1, 25, 50, 75]
-SIM_START          = datetime(2007, 9, 1)
-SIM_END            = datetime(2009, 6, 1)
+# 6주차: 학습/테스트 기간 분리
+#   학습 = 시작일 2006-04-01 ~ 2018-08-31 (USO 데이터가 2006-04부터)
+#   100라운드가 2018-12-31 안에 끝나는 게임만 사용 → 2019~2024는 테스트 전용
+SIM_START          = datetime(2006, 4, 1)
+SIM_END            = datetime(2018, 8, 31)
+TRAIN_LAST_DATE    = '2018-12-31'
+SCENARIO_ID        = 'train_2006_2018'
 N_SIMULATIONS      = 100_000
 
 ALREADY_COLS  = [f'Already_Card{i}' for i in range(1, 12)]
@@ -123,11 +128,15 @@ def run_chunk(args):
             sim_id     = sim_id_start + i
             start_date = random_start_date()
 
-            # SPX 전체 100라운드 데이터 로드
-            spx = get_price_list(start_date, '^SPX')
-            if len(spx) < 100:
+            # 가격 데이터는 게임마다 한 번만 로드해서 후보 카드 실행에 재사용
+            # (load_price_data = SPX 거래일 기준 정렬, 6주차 날짜 정렬 수정 반영)
+            price_data = load_price_data(start_date)
+            if len(price_data['dates']) < 100:
                 continue
-            closes = spx.iloc[:100]['Close'].values
+            # 100라운드가 학습 기간 안에서 끝나야 함 (테스트 기간 2019~ 누수 방지)
+            if price_data['dates'][99] > TRAIN_LAST_DATE:
+                continue
+            closes = np.array(price_data['close']['^SPX'][:100], dtype=float)
 
             # 기준 카드 조합 설정 (나머지 3장 랜덤 고정)
             base_selections = {}
@@ -169,7 +178,7 @@ def run_chunk(args):
                     card_selections[r] = candidate_card
 
                     try:
-                        result = run_game(start_date, card_selections)
+                        result = run_game(start_date, card_selections, price_data=price_data)
                         final_returns[candidate_card] = result['final_return_rate']
                     except Exception:
                         continue
@@ -188,7 +197,7 @@ def run_chunk(args):
 
                     row = {
                         'sim_id':                sim_id,
-                        'scenario_id':           'lehman',
+                        'scenario_id':           SCENARIO_ID,
                         'start_date':            start_date,
                         'current_round':         r,
                         'SPX_Return_so_far':     ret_so_far,
