@@ -14,6 +14,9 @@ eval_test_period.py — 테스트 기간(2019~2024) 정답 + 유사 구간 백�
     인접 시작일의 게임 기간이 겹치는(서로 독립이 아닌) 점을 반영한다.
   - 기간 비중복 부분집합: 게임 기간이 겹치지 않도록 시작일을 5개마다 1개씩 고른 부분집합 결과.
   - V2 − 유사 구간 차이의 신뢰구간 (V2 모델이 있을 때)
+  - 고정 순위 기준선(시장 무관): 학습 데이터(2006~2018)의 라운드별·카드별 평균 기여도 순서로 항상 같은 순위를 냄.
+    V2·유사 구간의 점수가 "시장 정보 활용"에서 오는지, "원래 좋은 카드를 위에 두는 것"에서 오는지 구분한다.
+  - 예측 순위끼리의 일치도: 두 방법이 서로 얼마나 같은 순위를 내는지
 
 카드 결과 정의 — V2 학습 데이터(monte_carlo_v2.run_chunk)와 동일
   - 이미 고른 카드(alreadyCards)는 고정, 이후 라운드(50·75) 카드는 무작위로 고정한 "나머지 카드 세트"를 만든다
@@ -74,6 +77,7 @@ RANDOM_HIT      = 1 / 3          # 3장 중 1위 무작위 적중률
 
 DATA_DIR    = os.path.join(os.path.dirname(__file__), '..', 'data', 'simulation')
 MODEL_PATH  = os.path.join(DATA_DIR, 'model_v2_A.pkl')
+TRAIN_DATA  = os.path.join(DATA_DIR, 'training_data_v2.csv')   # 고정 순위 기준선용 (V2 학습 데이터)
 OUT_RESULTS = os.path.join(DATA_DIR, 'eval_results.csv')
 OUT_NEIGH   = os.path.join(DATA_DIR, 'eval_neighbors.csv')
 OUT_META    = os.path.join(DATA_DIR, 'eval_meta.json')
@@ -304,20 +308,55 @@ def add_v2_predictions(df: pd.DataFrame, model) -> pd.DataFrame:
     return df
 
 
-def point_scores(df: pd.DataFrame, has_v2: bool) -> pd.DataFrame:
+def load_fixed_baseline(path):
+    """
+    고정 순위 기준선 — 학습 데이터에서 (라운드, 카드)별 Card_Contribution 평균.
+    큰 파일이라 필요한 열만 나눠 읽는다. 반환: ({(라운드, 카드): 평균}, 정보 dict) 또는 (None, 사유)
+    """
+    if not os.path.exists(path):
+        return None, f'학습 데이터 없음: {path}'
+    sel_cols = [f'Selected_Card_{i}' for i in range(1, 12)]
+    usecols = ['start_date', 'current_round', 'Card_Contribution'] + sel_cols
+    sums, counts = defaultdict(float), defaultdict(int)
+    max_start, n_rows = '', 0
+    for chunk in pd.read_csv(path, usecols=usecols, chunksize=500_000):
+        chunk = chunk[chunk['current_round'].isin(EVAL_ROUNDS)]
+        if chunk.empty:
+            continue
+        card = chunk[sel_cols].values.argmax(axis=1) + 1          # one-hot → 카드 ID
+        key = chunk['current_round'].values * 100 + card
+        g = pd.DataFrame({'key': key, 'v': chunk['Card_Contribution'].values}).groupby('key')['v'].agg(['sum', 'count'])
+        for k, row in g.iterrows():
+            sums[int(k)] += row['sum']
+            counts[int(k)] += int(row['count'])
+        max_start = max(max_start, str(chunk['start_date'].max()))
+        n_rows += len(chunk)
+    base = {(k // 100, k % 100): sums[k] / counts[k] for k in sums}
+    return base, {'rows': n_rows, 'max_start': max_start}
+
+
+def point_scores(df: pd.DataFrame, has_v2: bool, fixed_base=None) -> pd.DataFrame:
     out = []
     for pid, g in df.groupby('point_id'):
         def col(name):
             s = g.set_index('card_id')[name]
             s = pd.to_numeric(s, errors='coerce').dropna()
             return {int(c): float(v) for c, v in s.items()}
+        r = int(g['round'].iloc[0])
         truth, truth2, similar = col('truth_contribution'), col('truth2_contribution'), col('similar_contribution')
-        row = {'point_id': pid, 'start': g['start_date'].iloc[0], 'round': int(g['round'].iloc[0]),
+        row = {'point_id': pid, 'start': g['start_date'].iloc[0], 'round': r,
                'rho_ceiling': rho(truth, truth2), 'hit_ceiling': top1_hit_rate(truth, truth2),
                'rho_similar': rho(truth, similar), 'hit_similar': top1_hit_rate(truth, similar)}
-        if has_v2:
-            v2 = col('v2_prediction')
-            row.update({'rho_v2': rho(truth, v2), 'hit_v2': top1_hit_rate(truth, v2)})
+        v2 = col('v2_prediction') if has_v2 else {}
+        fixed = {c: fixed_base[(r, c)] for c in truth if (r, c) in fixed_base} if fixed_base else {}
+        if v2:
+            row.update({'rho_v2': rho(truth, v2), 'hit_v2': top1_hit_rate(truth, v2),
+                        'agree_v2_similar': rho(similar, v2)})
+        if fixed:
+            row.update({'rho_fixed': rho(truth, fixed), 'hit_fixed': top1_hit_rate(truth, fixed),
+                        'agree_similar_fixed': rho(fixed, similar)})
+            if v2:
+                row['agree_v2_fixed'] = rho(fixed, v2)
         out.append(row)
     return pd.DataFrame(out)
 
@@ -371,7 +410,7 @@ def fmt_ci(t, base=None):
     return f'{m:+.3f} [{lo:+.3f}, {hi:+.3f}]{mark}'
 
 
-def summarize(model_path, seed=42):
+def summarize(model_path, seed=42, train_data=TRAIN_DATA):
     if not os.path.exists(OUT_RESULTS):
         print(f'결과 파일 없음: {OUT_RESULTS} — 먼저 계산을 실행하세요.')
         return
@@ -389,18 +428,35 @@ def summarize(model_path, seed=42):
         df = add_v2_predictions(df, model)
         df.to_csv(OUT_RESULTS, index=False)
     else:
-        print(f'V2 모델 없음 ({model_path}) → 정답·유사 구간만 채점')
+        print(f'V2 모델 없음 ({model_path}) → V2 채점 생략')
     has_v2 = model is not None
 
-    scores = point_scores(df, has_v2)
+    fixed_base, fixed_info = load_fixed_baseline(train_data)
+    if fixed_base:
+        print(f'고정 순위 기준선: 학습 데이터 {fixed_info["rows"]:,}행 (시작일 최대 {fixed_info["max_start"]})')
+    else:
+        print(f'고정 순위 기준선 생략 — {fixed_info}')
+    has_fixed = bool(fixed_base)
+
+    scores = point_scores(df, has_v2, fixed_base)
     step = meta.get('step', 20)
     block = max(1, int(np.ceil(ROUNDS / step)))       # 게임 길이만큼의 시작일 묶음 (20거래일 간격 → 5개)
+    rounds_all = EVAL_ROUNDS + ['전체']
 
-    methods = [('정답 재현성 (점수 상한)', 'ceiling'), ('유사 구간 백테스팅', 'similar')]
+    def by_round(frame, r):
+        return frame if r == '전체' else frame[frame['round'] == r]
+
+    def ci(frame, colname, base=None):
+        return fmt_ci(block_bootstrap_ci(frame, colname, block, N_BOOT, seed), base)
+
+    methods = [('정답 재현성 (점수 상한)', 'ceiling')]
+    if has_fixed:
+        methods.append(('고정 순위 (시장 무관)', 'fixed'))
+    methods.append(('유사 구간 백테스팅', 'similar'))
     if has_v2:
         methods.append(('V2 (모델 A)', 'v2'))
 
-    lines = ['# 테스트 기간 평가 요약 (정답 vs 유사 구간 백테스팅 vs V2)', '',
+    lines = ['# 테스트 기간 평가 요약 (정답 vs 고정 순위 vs 유사 구간 백테스팅 vs V2)', '',
              f'- 생성 시각: {datetime.now().isoformat(timespec="seconds")}'
              + (f' / 계산 {meta["compute_seconds"]}초' if 'compute_seconds' in meta else ''),
              f'- 테스트 시작일 {scores["start"].nunique()}개 '
@@ -411,19 +467,27 @@ def summarize(model_path, seed=42):
              f'K={meta.get("k", "?")}, 최소 간격 {meta.get("min_gap", "?")}거래일'
              if isinstance(meta.get('n_windows'), int) else '- 유사 구간 설정: eval_meta.json 없음',
              f'- 카드 기여도: 나머지 카드 세트 {meta.get("n_sets", "?")}개 평균 (V2 학습 데이터와 같은 정의)',
-             f'- 신뢰구간: 시작일 {block}개(= {ROUNDS}거래일) 연속 블록 부트스트랩 {N_BOOT:,}회, 95%', '',
-             '## 1. 결과 (평균 [95% 신뢰구간])', '',
-             '표시: ✅ 신뢰구간 전체가 무작위 기준보다 높음 / ➖ 기준을 포함(구분 불가) / ❌ 기준보다 낮음', '',
-             '| 방법 | 라운드 | 스피어만 ρ (무작위 0) | 3장 중 1위 적중률 (무작위 0.333) |', '|---|---|---|---|']
-    for name, key in methods:
-        for r in EVAL_ROUNDS + ['전체']:
-            sub = scores if r == '전체' else scores[scores['round'] == r]
-            lines.append(f'| {name} | {r} | '
-                         f'{fmt_ci(block_bootstrap_ci(sub, "rho_" + key, block, N_BOOT, seed), 0.0)} | '
-                         f'{fmt_ci(block_bootstrap_ci(sub, "hit_" + key, block, N_BOOT, seed), RANDOM_HIT)} |')
+             (f'- 고정 순위: 학습 데이터(training_data_v2.csv) {fixed_info["rows"]:,}행의 라운드별·카드별 평균 기여도 순서 '
+              '(시장 지표 미사용)') if has_fixed else '- 고정 순위: 학습 데이터 없음 → 생략',
+             f'- 신뢰구간: 시작일 {block}개(= {ROUNDS}거래일) 연속 블록 부트스트랩 {N_BOOT:,}회, 95%', '']
 
-    lines += ['', '## 2. 기간 비중복 부분집합 (강건성 확인)', '',
-              f'게임 기간이 겹치지 않도록 시작일을 {block}개마다 1개씩 고른 부분집합 {block}개(각 약 '
+    sec = 0
+
+    def header(title):
+        nonlocal sec
+        sec += 1
+        return ['', f'## {sec}. {title}', '']
+
+    lines += header('결과 (평균 [95% 신뢰구간])')
+    lines += ['표시: ✅ 신뢰구간 전체가 무작위 기준보다 높음 / ➖ 기준을 포함(구분 불가) / ❌ 기준보다 낮음', '',
+              '| 방법 | 라운드 | 스피어만 ρ (무작위 0) | 3장 중 1위 적중률 (무작위 0.333) |', '|---|---|---|---|']
+    for name, key in methods:
+        for r in rounds_all:
+            sub = by_round(scores, r)
+            lines.append(f'| {name} | {r} | {ci(sub, "rho_" + key, 0.0)} | {ci(sub, "hit_" + key, RANDOM_HIT)} |')
+
+    lines += header('기간 비중복 부분집합 (강건성 확인)')
+    lines += [f'게임 기간이 겹치지 않도록 시작일을 {block}개마다 1개씩 고른 부분집합 {block}개(각 약 '
               f'{non_overlap_range(scores, "rho_similar", block)[2]}개 시작일)의 평균이 어느 범위에 있는지.', '',
               '| 방법 | 스피어만 ρ 범위 | 1위 적중률 범위 |', '|---|---|---|']
     for name, key in methods:
@@ -431,28 +495,55 @@ def summarize(model_path, seed=42):
         h_lo, h_hi, _ = non_overlap_range(scores, 'hit_' + key, block)
         lines.append(f'| {name} | {r_lo:+.3f} ~ {r_hi:+.3f} | {h_lo:.3f} ~ {h_hi:.3f} |')
 
+    pairs = []
     if has_v2:
+        pairs.append(('V2 − 유사 구간', 'v2', 'similar'))
+    if has_v2 and has_fixed:
+        pairs.append(('V2 − 고정 순위', 'v2', 'fixed'))
+    if has_fixed:
+        pairs.append(('유사 구간 − 고정 순위', 'similar', 'fixed'))
+    if pairs:
         diff = scores.copy()
-        diff['rho_diff'] = diff['rho_v2'] - diff['rho_similar']
-        diff['hit_diff'] = diff['hit_v2'] - diff['hit_similar']
-        lines += ['', '## 3. V2 − 유사 구간 (같은 시점끼리 차이)', '',
-                  '표시: ✅ V2가 확실히 높음 / ➖ 구분 불가 / ❌ 유사 구간이 확실히 높음', '',
-                  '| 라운드 | 스피어만 ρ 차이 | 1위 적중률 차이 |', '|---|---|---|']
-        for r in EVAL_ROUNDS + ['전체']:
-            sub = diff if r == '전체' else diff[diff['round'] == r]
-            lines.append(f'| {r} | {fmt_ci(block_bootstrap_ci(sub, "rho_diff", block, N_BOOT, seed), 0.0)} | '
-                         f'{fmt_ci(block_bootstrap_ci(sub, "hit_diff", block, N_BOOT, seed), 0.0)} |')
+        lines += header('방법 간 차이 (같은 시점끼리)')
+        lines += ['표시: ✅ 앞의 방법이 확실히 높음 / ➖ 구분 불가 / ❌ 뒤의 방법이 확실히 높음', '',
+                  '| 비교 | 라운드 | 스피어만 ρ 차이 | 1위 적중률 차이 |', '|---|---|---|---|']
+        for label, a, b in pairs:
+            diff[f'rho_{a}_{b}'] = diff['rho_' + a] - diff['rho_' + b]
+            diff[f'hit_{a}_{b}'] = diff['hit_' + a] - diff['hit_' + b]
+            for r in rounds_all:
+                sub = by_round(diff, r)
+                lines.append(f'| {label} | {r} | {ci(sub, f"rho_{a}_{b}", 0.0)} | {ci(sub, f"hit_{a}_{b}", 0.0)} |')
 
-    n = 4 if has_v2 else 3
-    lines += ['', f'## {n}. 누설 점검', '',
-              f'- 유사 구간 중 학습 기간 밖(시작 < {TRAIN_START} 또는 100라운드 > {TRAIN_LAST_DATE}) 사용: '
+    agrees = []
+    if has_v2:
+        agrees.append(('V2 ↔ 유사 구간', 'agree_v2_similar'))
+    if has_v2 and has_fixed:
+        agrees.append(('V2 ↔ 고정 순위', 'agree_v2_fixed'))
+    if has_fixed:
+        agrees.append(('유사 구간 ↔ 고정 순위', 'agree_similar_fixed'))
+    if agrees:
+        lines += header('예측 순위끼리의 일치도')
+        lines += ['두 방법이 같은 시점에서 서로 얼마나 같은 순위를 내는지 (스피어만 ρ, 1이면 완전히 같은 순위). '
+                  '고정 순위와의 일치도가 높을수록 시장 상황과 무관하게 비슷한 순위를 낸다는 뜻이다.', '',
+                  '| 두 방법 | 라운드 | 예측 순위끼리 ρ |', '|---|---|---|']
+        for label, colname in agrees:
+            for r in rounds_all:
+                lines.append(f'| {label} | {r} | {ci(by_round(scores, r), colname)} |')
+
+    lines += header('누설 점검')
+    lines += [f'- 유사 구간 중 학습 기간 밖(시작 < {TRAIN_START} 또는 100라운드 > {TRAIN_LAST_DATE}) 사용: '
               f'{meta.get("leak_violations", "?")}건',
               '- 테스트 시점의 유사 구간 검색 입력: 해당 게임의 closes[:r] (추천 시점까지)만 사용',
               '- 지표 표준화: 학습 구간 후보 통계로만 계산',
-              '- V2 입력: 저장된 so_far 지표(closes[:r])·alreadyCards·후보 카드만 사용', '',
-              f'## {n + 1}. 해석 시 주의', '',
-              '- 정답 재현성(점수 상한)은 같은 시점의 정답을 무작위 세트만 바꿔 다시 계산했을 때 얼마나 일치하는지다. '
+              '- V2 입력: 저장된 so_far 지표(closes[:r])·alreadyCards·후보 카드만 사용']
+    if has_fixed:
+        lines.append(f'- 고정 순위: 학습 데이터만 사용 (시작일 최대 {fixed_info["max_start"]}, 시장 지표 미사용)')
+
+    lines += header('해석 시 주의')
+    lines += ['- 정답 재현성(점수 상한)은 같은 시점의 정답을 무작위 세트만 바꿔 다시 계산했을 때 얼마나 일치하는지다. '
               '방법의 점수는 이 값과 비교해 읽는다.',
+              '- 고정 순위는 시장 정보를 전혀 쓰지 않는 기준선이다. V2·유사 구간이 이보다 확실히 높아야 '
+              '"추천 시점의 시장 정보를 활용했다"고 말할 수 있다.',
               f'- 시작일 간격({step}거래일)이 게임 길이({ROUNDS}거래일)보다 짧아 시점들이 독립이 아니다. '
               '신뢰구간은 이를 반영한 블록 부트스트랩이며, 기간 비중복 부분집합 결과도 함께 확인한다.',
               '- 테스트 기간(2019~2024)은 코로나 급락·2022 하락장을 포함한 한 번의 시장 경로다. 다른 기간에서도 같은 결과가 나온다는 뜻은 아니다.']
@@ -475,6 +566,7 @@ if __name__ == '__main__':
     ap.add_argument('--quick', action='store_true', help='테스트 시작일 5개만 (빠른 점검)')
     ap.add_argument('--summary-only', action='store_true', help='계산 없이 기존 결과로 다시 채점 (V2 추가 등)')
     ap.add_argument('--model', default=MODEL_PATH, help='V2 모델 경로 (없으면 V2 비교 생략)')
+    ap.add_argument('--train-data', default=TRAIN_DATA, help='고정 순위 기준선용 학습 데이터 (없으면 생략)')
     a = ap.parse_args()
     if a.summary_only or run(a.k, a.sets, a.already_sets, a.step, a.min_gap, a.seed, a.quick):
-        summarize(a.model, a.seed)
+        summarize(a.model, a.seed, a.train_data)
