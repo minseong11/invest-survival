@@ -4,7 +4,9 @@ V2 모델 A/B 학습 (6주차)
 입력: training_data_v2.csv (monte_carlo_v2.py, 시작일 2006-04-01 ~ 2018-08-31)
 출력:
   model_v2_A.pkl — 학습 기간 전체 → 코로나·2022 시나리오, 7주차 테스트(2019~2024)용
-  model_v2_B.pkl — 리먼 구간 제외 → 리먼 시나리오용 (리먼 기간을 보지 않은 모델)
+  model_v2_B.pkl — 리먼 구간 제외 → 리먼 시나리오용 (위기 구간을 제외한 교육용 시연 모델)
+                   ※ 2010~2018은 학습하므로 "2008년 당시 정보만 쓴 모델"은 아님.
+                     일반화 검증은 모델 A의 2019~2024 테스트로 한다.
 
 입력 26차원·타겟(Card_Contribution)·XGBoost 설정은 recommend_v2.py와 동일.
 내부 평가는 같은 게임(sim_id)의 행이 학습/평가에 섞이지 않도록 게임 단위로 나눈다.
@@ -22,13 +24,29 @@ from sklearn.metrics import r2_score, mean_absolute_error
 from xgboost import XGBRegressor
 
 from recommend_v2 import FEATURE_COLS, DATA_DIR, DATA_PATH
+from data_loader import load_all
 
 MODEL_A_PATH = os.path.join(DATA_DIR, 'model_v2_A.pkl')
 MODEL_B_PATH = os.path.join(DATA_DIR, 'model_v2_B.pkl')
 
-# 모델 B에서 제외할 시작일 구간 (리먼 시나리오 2008-09-02 시작 게임과 겹치는 시장 국면)
+# 모델 B에서 제외할 구간 (리먼 시나리오 게임 기간을 포함하는 위기 국면)
+# 게임의 "전체 100라운드 기간"이 이 구간과 하루라도 겹치면 제외한다.
+#   (시작일만 보면 2007-09 이전에 시작해 구간 안까지 이어지는 게임이 남음 — 6주차 피드백)
 LEHMAN_EXCLUDE_START = '2007-09-01'
 LEHMAN_EXCLUDE_END   = '2009-10-31'
+LEHMAN_SCENARIO_START = '2008-09-01'
+ROUNDS = 100
+
+
+def game_end_dates(start_dates: pd.Series) -> pd.Series:
+    """각 시작일의 100번째 SPX 거래일(= 게임 마지막 라운드 날짜)"""
+    spx_dates = pd.DatetimeIndex(load_all()['^SPX']['Date']).sort_values()
+    uniq = pd.to_datetime(pd.Series(start_dates.unique()))
+    first_idx = spx_dates.searchsorted(uniq.values, side='left')
+    last_idx = first_idx + (ROUNDS - 1)
+    ends = [spx_dates[i] if i < len(spx_dates) else pd.NaT for i in last_idx]
+    mapping = dict(zip(start_dates.unique(), ends))
+    return start_dates.map(mapping)
 
 
 def make_xgb():
@@ -81,10 +99,26 @@ def main():
 
     train_one(df, '모델 A (2006.04~2018.08 전체)', MODEL_A_PATH)
 
-    in_lehman = (starts >= LEHMAN_EXCLUDE_START) & (starts <= LEHMAN_EXCLUDE_END)
-    df_b = df[~in_lehman]
-    print(f'\n모델 B: 리먼 구간 시작 게임 {df.loc[in_lehman, "sim_id"].nunique():,}개 제외')
-    train_one(df_b, f'모델 B (리먼 {LEHMAN_EXCLUDE_START}~{LEHMAN_EXCLUDE_END} 제외)', MODEL_B_PATH)
+    # 게임 전체 기간 [시작일, 100라운드 날짜]가 제외 구간과 겹치는지
+    ends = pd.to_datetime(game_end_dates(df['start_date']))
+    overlap = (starts <= LEHMAN_EXCLUDE_END) & (ends >= LEHMAN_EXCLUDE_START)
+    start_only = (starts >= LEHMAN_EXCLUDE_START) & (starts <= LEHMAN_EXCLUDE_END)
+    n_overlap = df.loc[overlap, 'sim_id'].nunique()
+    n_start_only = df.loc[start_only, 'sim_id'].nunique()
+
+    # 리먼 시나리오 실제 게임 기간이 제외 구간 안에 있는지 확인
+    lehman_end = game_end_dates(pd.Series([LEHMAN_SCENARIO_START])).iloc[0]
+    print(f'\n리먼 시나리오 게임 기간: {LEHMAN_SCENARIO_START} ~ {pd.Timestamp(lehman_end).date()}')
+    print(f'모델 B 제외 구간: {LEHMAN_EXCLUDE_START} ~ {LEHMAN_EXCLUDE_END} (게임 전체 기간이 겹치면 제외)')
+    print(f'  시작일 기준이었다면 제외: {n_start_only:,}게임')
+    print(f'  기간 겹침 기준 제외:      {n_overlap:,}게임 (+{n_overlap - n_start_only:,})')
+
+    df_b = df[~overlap]
+    b_ends = ends[~overlap]
+    leaked = ((pd.to_datetime(df_b['start_date']) <= LEHMAN_EXCLUDE_END) &
+              (b_ends >= LEHMAN_EXCLUDE_START)).sum()
+    print(f'  확인: 모델 B 학습 데이터 중 제외 구간과 겹치는 행 = {leaked}')
+    train_one(df_b, f'모델 B (게임 기간이 {LEHMAN_EXCLUDE_START}~{LEHMAN_EXCLUDE_END}와 겹치면 제외)', MODEL_B_PATH)
 
 
 if __name__ == '__main__':

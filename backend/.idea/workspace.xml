@@ -5,7 +5,13 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="6e045f6c-dc86-4c20-97a2-671bf352b56a" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/../frontEnd/lib/screens/game_screen.dart" beforeDir="false" afterPath="$PROJECT_DIR$/../frontEnd/lib/screens/game_screen.dart" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/gradle.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/gradle.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/misc.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/python_simulation/fastapi_server.py" beforeDir="false" afterPath="$PROJECT_DIR$/python_simulation/fastapi_server.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/python_simulation/train_v2_ab.py" beforeDir="false" afterPath="$PROJECT_DIR$/python_simulation/train_v2_ab.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main/java/com/capstone/survival/service/GameService.java" beforeDir="false" afterPath="$PROJECT_DIR$/src/main/java/com/capstone/survival/service/GameService.java" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/../frontEnd/lib/models/result_analysis.dart" beforeDir="false" afterPath="$PROJECT_DIR$/../frontEnd/lib/models/result_analysis.dart" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../frontEnd/lib/services/api_client.dart" beforeDir="false" afterPath="$PROJECT_DIR$/../frontEnd/lib/services/api_client.dart" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
@@ -50,8 +56,9 @@
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
     &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;Feature/minseong/#60&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;Feature/minseong/#85&quot;,
     &quot;kotlin-language-version-configured&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;/Users/mycom/Documents/GitHub/invest-survival/backend&quot;,
     &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
     &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
     &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
@@ -80,6 +87,8 @@
       <updated>1788840513847</updated>
       <workItem from="1788840514919" duration="3924000" />
       <workItem from="1788942290030" duration="27000" />
+      <workItem from="1791866958206" duration="964000" />
+      <workItem from="1791868441065" duration="374000" />
     </task>
     <servers />
   </component>
