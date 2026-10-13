@@ -912,25 +912,30 @@ public class GameService {
                 );
     }
 
-    // SPX 거래일 기준으로 종목 가격을 맞춘 리스트
+    // SPX 거래일 기준으로 종목 가격을 맞춘 리스트 (Python game_logic.load_price_data()와 같은 규칙)
     // - i번째 = SPX의 i번째 거래일 날짜의 종가
-    // - 그날 거래가 없으면 직전 거래일 가격, 그 이전 데이터가 없으면(상장 전) null
+    // - 그날 거래가 없으면 직전 거래일 가격 (기간 제한 없음), 그 이전 데이터가 전혀 없으면(상장 전) null
     private List<StockPrice> loadAlignedPriceList(GameSession session, String ticker, List<StockPrice> spxList) {
         if ("^SPX".equals(ticker)) return spxList;
+        if (spxList.isEmpty()) return new ArrayList<>();
 
-        // 시작일 당일에 거래가 없는 경우를 위해 2주 전부터 조회 (직전 거래일 가격 확보)
-        LocalDate from = LocalDate.parse(session.getGameStartDate()).minusDays(14);
+        LocalDate firstDate = spxList.get(0).getTradeDate();
+        // 첫 거래일 당일 또는 그 이전의 가장 최근 가격 (없으면 상장 전)
+        StockPrice current = stockPriceRepository
+                .findTopByTickerAndTradeDateLessThanEqualOrderByTradeDateDesc(ticker, firstDate)
+                .orElse(null);
         List<StockPrice> raw = stockPriceRepository
-                .findByTickerAndTradeDateGreaterThanEqualOrderByTradeDate(ticker, from);
+                .findByTickerAndTradeDateGreaterThanEqualOrderByTradeDate(ticker, firstDate);
 
         List<StockPrice> aligned = new ArrayList<>(spxList.size());
-        int p = -1;
+        int p = 0;
         for (StockPrice spx : spxList) {
             LocalDate d = spx.getTradeDate();
-            while (p + 1 < raw.size() && !raw.get(p + 1).getTradeDate().isAfter(d)) {
+            while (p < raw.size() && !raw.get(p).getTradeDate().isAfter(d)) {
+                current = raw.get(p);
                 p++;
             }
-            aligned.add(p >= 0 ? raw.get(p) : null);
+            aligned.add(current);
         }
         return aligned;
     }
@@ -953,9 +958,10 @@ public class GameService {
         Map<String, Boolean> listedByTicker = new HashMap<>();
         for (Card card : cardRepository.findAll()) {
             String ticker = card.getTicker();
+            // 1라운드 날짜 이전(포함)에 데이터가 하나라도 있으면 상장 (기간 제한 없음, Python과 동일)
             boolean listed = "^SPX".equals(ticker) || listedByTicker.computeIfAbsent(ticker, t ->
-                    !stockPriceRepository.findByTickerAndTradeDateBetweenOrderByTradeDate(
-                            t, firstDate.minusDays(14), firstDate).isEmpty());
+                    stockPriceRepository.findTopByTickerAndTradeDateLessThanEqualOrderByTradeDateDesc(
+                            t, firstDate).isPresent());
             if (!listed) unavailable.add(card.getId());
         }
         return unavailable;
