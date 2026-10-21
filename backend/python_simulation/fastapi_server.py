@@ -11,6 +11,7 @@ FastAPI AI 추천 서버
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
 import os
+import re
 import pickle
 import numpy as np
 from itertools import permutations
@@ -178,7 +179,9 @@ class V2FeedbackRequest(BaseModel):
 # V2 피드백 응답: Python → Java (v5.0 신규)
 class V2FeedbackResponse(BaseModel):
     feedback: str
-    verified: Optional[bool] = None   # (v7.0) True: LLM 문장 검증 통과 / False: 검증 실패 → 대체 문장 / None: LLM 실패
+    verified: Optional[bool] = None   # (v7.0) True: 구현된 검사 통과 / False: 검사 실패 → 대체 문장 / None: LLM 실패
+    #   ※ verified=True는 "구현된 검사(규칙 v3 + 숫자 출처 + 무조건부 카드 조건화)를 통과"라는 뜻이지 내용 전체의 사실 확인이 아님
+    status: str = ''                  # (v8.0) 'llm' | 'fallback' | 'failed' — 화면·로그에서 상태 구분용
 
 # 사후 분석(백테스팅) 요청/응답 (v6.0 신규)
 class BacktestRequest(BaseModel):
@@ -291,17 +294,83 @@ def format_already(already_cards: List[int]) -> str:
 
 
 def build_prompt(req: V2FeedbackRequest) -> str:
+    """
+    (v8.0) LLM은 "왜 지금 이 카드인지"만 설명하고, 카드 규칙(발동 조건·비율·횟수)은 쓰지 않는다.
+    카드 규칙은 응답에 프로그램이 CARD_FACTS 값으로 직접 붙인다 (card_rule_header).
+    LLM이 쓸 수 있는 숫자는 allowed_numbers()에 있는 값(시장 지표, V2 예측 기여도, 라운드)뿐이다.
+    """
     rankings_text = format_rankings(req.rankings)
     already_text = format_already(req.alreadyCards)
     return (
         f'현재 시장: SPX 누적수익률 {req.spxReturnSoFar}%, '
         f'변동성 {req.spxVolatilitySoFar}, MDD {req.spxMddSoFar}%\n'
         f'현재 라운드: {req.currentRound}\n\n'
-        f'이미 보유한 카드(정확한 발동 조건 포함):\n{already_text}\n\n'
-        f'후보 카드 순위(정확한 발동 조건 포함):\n{rankings_text}\n\n'
-        f'위 카드들의 실제 발동 조건을 근거로 1위 카드가 왜 유리한지 '
-        f'2~3문장으로 한국어로 설명해줘. 카드 로직에 없는 내용은 지어내지 마.'
+        f'이미 보유한 카드(참고용 발동 조건):\n{already_text}\n\n'
+        f'후보 카드 순위(참고용 발동 조건, 기여도는 V2 모델의 예측값):\n{rankings_text}\n\n'
+        f'1위 카드가 지금 시장 상황에서 왜 유리할 수 있는지 2~3문장의 한국어 평문으로 설명해줘.\n'
+        f'규칙:\n'
+        f'- 카드의 발동 조건, 매수·매도 비율, 최대 횟수는 쓰지 마. 카드 규칙은 화면에 따로 정확하게 표시돼.\n'
+        f'- 숫자는 위에 나온 시장 수치와 예측 기여도만 그대로 쓸 수 있어. 기여도를 쓸 때는 "예측"이라고 밝혀.\n'
+        f'- 마크다운(#, **, 목록 기호)은 쓰지 마.\n'
+        f'- 카드 로직에 없는 내용은 지어내지 마.'
     )
+
+
+# (v8.0) 카드 규칙 문장은 프로그램이 붙인다 — 검증기와 같은 원천(CARD_FACTS)
+def card_rule_header(card_id: int) -> str:
+    fact = CARD_FACTS.get(card_id)
+    if not fact:
+        return ''
+    return f'카드 규칙 · {fact.name}: {fact.condition_desc}'
+
+
+def allowed_numbers(req: V2FeedbackRequest) -> List[float]:
+    """LLM 설명에 써도 되는 숫자 = 서버가 준 값 (부호 무시)"""
+    vals = [req.spxReturnSoFar, req.spxVolatilitySoFar, req.spxMddSoFar, req.currentRound]
+    vals += [r.contribution for r in req.rankings]
+    return [abs(float(v)) for v in vals]
+
+
+# 단위가 붙은 숫자만 검사 (%, %p, 회, 번, 배, 라운드) — "1위", "2~3문장" 같은 표현은 제외
+_NUM_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(%p|%|회|번|배|라운드)')
+
+
+def unexpected_numbers(text: str, req: V2FeedbackRequest) -> List[str]:
+    """
+    LLM 설명에 나온 (단위가 붙은) 숫자 중 서버가 준 값이 아닌 것.
+    카드 조건 %·비율·횟수를 LLM이 지어내거나 틀리게 옮기면 여기서 걸린다 (GAP 1~5).
+    소수 첫째 자리 반올림 표기(-17.27 → -17.3)까지만 허용.
+    """
+    allowed = allowed_numbers(req)
+    bad = []
+    for m in _NUM_RE.finditer(text):
+        v = float(m.group(1))
+        ok = any(abs(v - a) < 1e-9 or abs(v - round(a, 1)) < 1e-9 for a in allowed)
+        if not ok:
+            bad.append(m.group(0))
+    return bad
+
+
+# 무조건부/1회성/정기 카드를 "~할 때 매수"처럼 조건부로 설명했는지 (GAP 6)
+_COND_WORDS = ('때', '경우', '면 ')
+_TRADE_WORDS = ('매수', '매도', '사들', '산다', '사는', '팔', '발동')
+
+
+def unconditional_misdescribed(text: str) -> List[str]:
+    issues = []
+    for fact in CARD_FACTS.values():
+        if fact.trigger_type not in ('UNCONDITIONAL', 'PERIODIC', 'ONCE'):
+            continue
+        for m in re.finditer(re.escape(fact.name), text):
+            window = text[m.end(): m.end() + 30]
+            if any(w in window for w in _COND_WORDS) and any(w in window for w in _TRADE_WORDS):
+                issues.append(f"'{fact.name}'은 조건 없는 카드인데 조건부처럼 서술됨 → \"{fact.name}{window}\"")
+    return issues
+
+
+def strip_markdown(text: str) -> str:
+    text = re.sub(r'^\s*#+\s*', '', text, flags=re.MULTILINE)
+    return text.replace('**', '').replace('__', '').strip()
 
 
 # =============================================
@@ -454,8 +523,9 @@ def build_fallback_feedback(req: V2FeedbackRequest) -> str:
     top_fact = CARD_FACTS.get(top.cardId)
     top_name = top_fact.name if top_fact else CARD_NAMES.get(top.cardId, f'카드{top.cardId}')
     lines = [
-        f'AI 추천: {top_name} — {top_fact.condition_desc if top_fact else ""}',
-        '후보 카드 예상 기여도: ' + ', '.join(
+        f'AI 추천: {top_name}',
+        card_rule_header(top.cardId),
+        'V2 예측 기여도(실측 아님): ' + ', '.join(
             f'{CARD_FACTS[r.cardId].name if r.cardId in CARD_FACTS else r.cardId} {r.contribution:+.2f}%'
             for r in ranked
         ),
@@ -467,37 +537,55 @@ def build_fallback_feedback(req: V2FeedbackRequest) -> str:
 @app.post('/ai/v2/feedback', response_model=V2FeedbackResponse)
 def generate_feedback(req: V2FeedbackRequest):
     """
-    V2 LLM 자연어 피드백 (v5.0 신규)
-    /ai/v2/recommend 결과(rankings) + 시장 상황 → Claude API로 자연어 설명 생성
-    실패해도 카드 추천 자체는 이미 끝난 상태이므로, 예외를 던지지 않고
-    feedback=""을 200으로 반환한다 (명세서 4장 에러 처리).
+    V2 LLM 자연어 피드백 (v5.0 신규, v8.0 출력 통제)
+    /ai/v2/recommend 결과(rankings) + 시장 상황 → Claude API로 "왜 이 카드인지" 설명 생성
+
+    v8.0 출력 구조
+      - 카드 규칙(조건·비율·횟수): 프로그램이 CARD_FACTS 값으로 직접 붙임 → LLM이 틀릴 수 없음
+      - LLM 설명: 카드 규칙 숫자를 쓰지 않도록 지시 + 검사 3가지(검증기 v3, 숫자 출처, 무조건부 카드 조건화)
+      - 검사 실패 → 확인된 정보만으로 만든 대체 문장 (status='fallback')
+      - LLM 호출 실패 → "생성 실패" 문구 + 카드 규칙 (status='failed'), 200 반환 (게임 진행에 영향 없음)
     """
+    ranked = sorted(req.rankings, key=lambda r: r.rank)
+    header = card_rule_header(ranked[0].cardId) if ranked else ''
+
     try:
         msg = client.messages.create(
             model='claude-sonnet-4-6',
             max_tokens=500,
             messages=[{'role': 'user', 'content': build_prompt(req)}]
         )
-        text = msg.content[0].text
+        text = strip_markdown(msg.content[0].text)
     except Exception as e:
+        # (v8.0) 빈 문자열 대신 "생성 실패" 상태를 알리고, 카드 규칙은 그대로 보여준다
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
-        return V2FeedbackResponse(feedback='', verified=None)
+        failed = '\n'.join(x for x in [header, '(AI 설명 생성에 실패했어요. 카드 규칙만 표시해요)'] if x)
+        return V2FeedbackResponse(feedback=failed, verified=None, status='failed')
 
-    # (v7.0) 사용자에게 보내기 전에 규칙 기반 검증기로 검사
-    #   통과 → LLM 문장 그대로 / 실패 → 확인된 정보(CARD_FACTS·V2 순위)만으로 만든 대체 문장
+    # 사용자에게 보내기 전 검사 3가지
+    #   1) 규칙 기반 검증기 v3 (조건 %·미포함 카드·무제한 등)
+    #   2) 숫자 출처 검사: 서버가 준 값이 아닌 숫자 → 카드 규칙을 지어내거나 틀리게 옮긴 것 (GAP 1~5)
+    #   3) 조건 없는 카드를 조건부로 서술 (GAP 6)
     result = verify_feedback(
         text,
         already_cards=req.alreadyCards,
         ranking_card_ids=[r.cardId for r in req.rankings],
     )
-    if result.consistent:
-        return V2FeedbackResponse(feedback=text, verified=True)
+    issues = list(result.issues)
+    bad_nums = unexpected_numbers(text, req)
+    if bad_nums:
+        issues.append(f'[숫자 출처 불명] 서버가 준 값이 아닌 숫자: {bad_nums}')
+    issues += [f'[조건부로 오기재] {x}' for x in unconditional_misdescribed(text)]
 
-    print('⚠️  LLM 피드백 검증 실패 → 대체 문장으로 응답')
+    if not issues:
+        feedback = '\n\n'.join(x for x in [header, text] if x)
+        return V2FeedbackResponse(feedback=feedback, verified=True, status='llm')
+
+    print('⚠️  LLM 피드백 검사 실패 → 대체 문장으로 응답')
     print(f'    원문: {text}')
-    for issue in result.issues:
+    for issue in issues:
         print(f'    - {issue}')
-    return V2FeedbackResponse(feedback=build_fallback_feedback(req), verified=False)
+    return V2FeedbackResponse(feedback=build_fallback_feedback(req), verified=False, status='fallback')
 
 
 @app.post('/ai/analysis/backtest', response_model=BacktestResponse)
