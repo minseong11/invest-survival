@@ -35,6 +35,8 @@ MODEL_B_PATH = os.path.join(DATA_DIR, 'model_v2_B.pkl')
 LEHMAN_EXCLUDE_START = '2007-09-01'
 LEHMAN_EXCLUDE_END   = '2009-10-31'
 LEHMAN_SCENARIO_START = '2008-09-01'
+# USO(원유) 데이터 시작일. 이보다 먼저 시작한 게임은 원유 카드 가격이 결측이라 학습에서 제외 (#87 결측 구분)
+TRAIN_MIN_START = '2006-04-10'
 ROUNDS = 100
 
 
@@ -97,7 +99,14 @@ def main():
         print('❌ 2018-08-31 이후 시작 게임이 있습니다. monte_carlo_v2.py 기간 설정을 확인하세요.')
         return
 
-    train_one(df, '모델 A (2006.04~2018.08 전체)', MODEL_A_PATH)
+    # 원유(USO) 데이터 시작 전 게임 제외 — 원유 카드가 "가격 없음" 상태로 섞이지 않도록
+    early = starts < TRAIN_MIN_START
+    if early.any():
+        print(f'USO 데이터 시작({TRAIN_MIN_START}) 전 시작 게임 {df.loc[early, "sim_id"].nunique():,}개 제외')
+        df = df[~early].reset_index(drop=True)
+        starts = pd.to_datetime(df['start_date'])
+
+    train_one(df, '모델 A (2006.04.10~2018.08 전체)', MODEL_A_PATH)
 
     # 게임 전체 기간 [시작일, 100라운드 날짜]가 제외 구간과 겹치는지
     ends = pd.to_datetime(game_end_dates(df['start_date']))

@@ -363,8 +363,8 @@ class _GameResultScreenState extends State<GameResultScreen>
                 color: _purpleSoft,
                 borderRadius: BorderRadius.circular(10),
               ),
-              child: const Text('11장 전체 조합 기준',
-                  style: TextStyle(
+              child: Text('${a.cardPoolSize}장 전체 조합 기준',
+                  style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                       color: _purple)),
@@ -419,7 +419,7 @@ class _GameResultScreenState extends State<GameResultScreen>
           ),
           SizedBox(width: 12),
           Expanded(
-            child: Text('7,920개 카드 조합을 모두 계산하는 중이에요...',
+            child: Text('가능한 카드 조합을 모두 계산하는 중이에요...',
                 style: TextStyle(fontSize: 12, color: _gray)),
           ),
         ],
@@ -503,7 +503,7 @@ class _GameResultScreenState extends State<GameResultScreen>
       final top  = best.cardAt(r);
       return mine != null && top != null && mine.cardId == top.cardId;
     }).length;
-    final bestLabel = a.isTied(best.rank) ? '공동 1위 중 하나' : '1위 조합';
+    const bestLabel = '1위 조합';
     final diff      = best.finalReturnRate - p.finalReturnRate;
 
     return Container(
@@ -660,9 +660,9 @@ class _GameResultScreenState extends State<GameResultScreen>
 
   // ③ 이 시나리오의 최적 조합 Top N
   Widget _buildTopCombosCard(ResultAnalysis a) {
-    // 상위 조합이 모두 같은 순위면 "발동하지 않은 카드만 다른" 경우라 안내
-    final allTied = a.topCombos.length > 1 &&
-        a.topCombos.every((c) => c.rank == a.topCombos.first.rank);
+    // 서버가 최종 자산이 같은 조합을 하나로 묶어 보내므로(tiedCount, PR #78)
+    // 순위가 1위 → 7위처럼 건너뛸 수 있음 → 그때만 이유를 안내
+    final rankSkipped = a.hasSkippedRank;
 
     return Container(
       width: double.infinity,
@@ -682,11 +682,11 @@ class _GameResultScreenState extends State<GameResultScreen>
                   color: Color(0xFF111111))),
           const SizedBox(height: 12),
           ...a.topCombos.map((c) => _buildComboRow(a, c)),
-          if (allTied) ...[
+          if (rankSkipped) ...[
             const SizedBox(height: 4),
             const Text(
-              '결과가 똑같은 조합이 여러 개예요. 한 번도 발동하지 않은 카드만 '
-              '다른 경우 최종 자산이 같아요.',
+              '최종 자산이 같은 조합은 하나로 묶어 보여줘요. 그래서 순위가 '
+              '건너뛸 수 있어요. (한 번도 발동하지 않은 카드만 다르면 결과가 같아요)',
               style: TextStyle(fontSize: 10.5, color: _gray, height: 1.5),
             ),
           ],
@@ -696,7 +696,7 @@ class _GameResultScreenState extends State<GameResultScreen>
   }
 
   Widget _buildComboRow(ResultAnalysis a, ComboResult c) {
-    final rankLabel = a.isTied(c.rank) ? '공동 ${c.rank}위' : '${c.rank}위';
+    final rankLabel = '${c.rank}위';
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),

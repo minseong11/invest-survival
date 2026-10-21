@@ -1,7 +1,7 @@
 // 게임 종료 후 사후 분석 (백테스팅) — POST /game/result/analysis
 // API 명세서 v6.1 기준
 //
-// 7,920개 카드 조합(11장 중 4장 순열)을 이 시나리오에서 실제로 돌려본 결과.
+// 사용 가능한 카드 중 4장 순열(11장이면 7,920개, 닷컴 9장이면 3,024개)을 이 시나리오에서 실제로 돌려본 결과.
 // 최종 자산이 같은 조합은 서버가 하나로 묶어 보냄 (tiedCount) → 순위가 1, 7, 8처럼 건너뛸 수 있음
 
 // 조합 안의 카드 한 장 (라운드별)
@@ -94,11 +94,13 @@ class ResultAnalysis {
   final int totalCombinations;
   final List<ComboResult> topCombos;
   final PlayerAnalysisResult playerResult;
+  final int cardPoolSize; // 이 시나리오에서 사용 가능한 카드 수 (#87: 닷컴은 상장 전 종목 제외로 9장)
 
   ResultAnalysis({
     required this.totalCombinations,
     required this.topCombos,
     required this.playerResult,
+    this.cardPoolSize = 11,
   });
 
   factory ResultAnalysis.fromJson(Map<String, dynamic> json) {
@@ -111,6 +113,7 @@ class ResultAnalysis {
           .toList(),
       playerResult: PlayerAnalysisResult.fromJson(
           json['playerResult'] as Map<String, dynamic>, total),
+      cardPoolSize: (json['cardPoolSize'] as num?)?.toInt() ?? 11,
     );
   }
 
