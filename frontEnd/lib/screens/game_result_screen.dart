@@ -6,8 +6,17 @@ import '../services/game_service.dart';
 
 class GameResultScreen extends StatefulWidget {
   final GameSession session;
+  // 게임 중 받은 AI 예측 1순위 (라운드 → 카드 ID). 예측을 안 받은 라운드는 없음
+  final Map<int, int> aiPicks;
+  // 그 라운드에 받은 후보 카드 3장 (1위 조합 카드가 후보에 있었는지 확인용)
+  final Map<int, List<int>> aiCandidates;
 
-  const GameResultScreen({super.key, required this.session});
+  const GameResultScreen({
+    super.key,
+    required this.session,
+    this.aiPicks = const {},
+    this.aiCandidates = const {},
+  });
 
   @override
   State<GameResultScreen> createState() => _GameResultScreenState();
@@ -381,6 +390,11 @@ class _GameResultScreenState extends State<GameResultScreen>
           const SizedBox(height: 12),
         ],
 
+        if (widget.aiPicks.isNotEmpty) ...[
+          _buildAiPickCard(a),
+          const SizedBox(height: 12),
+        ],
+
         if (a.topCombos.isNotEmpty) ...[
           _buildTopCombosCard(a),
           const SizedBox(height: 10),
@@ -613,6 +627,108 @@ class _GameResultScreenState extends State<GameResultScreen>
     );
   }
 
+  // ③ AI 예측 vs 내 선택 (게임 중 AI 예측을 받은 25·50라운드만)
+  //  "1위 조합과 같은 카드인지"로 예측이 맞았는지 확인하게 함 (중간보고서 4.4 계획)
+  Widget _buildAiPickCard(ResultAnalysis a) {
+    final best   = a.best;
+    final rounds = widget.aiPicks.keys.toList()..sort();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _border, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('AI 예측은 맞았을까?',
+              style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF111111))),
+          const SizedBox(height: 12),
+          Row(
+            children: const [
+              SizedBox(
+                  width: 36,
+                  child: Text('라운드',
+                      style: TextStyle(fontSize: 10, color: _gray))),
+              Expanded(
+                  child: Text('AI 예측 1위',
+                      style: TextStyle(fontSize: 10, color: _gray))),
+              SizedBox(width: 8),
+              Expanded(
+                  child: Text('내 선택',
+                      style: TextStyle(fontSize: 10, color: _gray))),
+              SizedBox(
+                  width: 56,
+                  child: Text('1위 조합과',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 10, color: _gray))),
+            ],
+          ),
+          const SizedBox(height: 6),
+          ...rounds.map((r) {
+            final aiId   = widget.aiPicks[r]!;
+            final mine   = a.playerResult.cardAt(r);
+            final top    = best?.cardAt(r);
+            final aiHit  = top != null && top.cardId == aiId;
+            // 1위 조합 카드가 그때 후보 3장에 없었으면 애초에 맞힐 수 없음
+            final inPool = top != null &&
+                (widget.aiCandidates[r]?.contains(top.cardId) ?? true);
+            final verdict = top == null
+                ? '-'
+                : aiHit ? '같음' : (inPool ? '다름' : '후보 밖');
+            final aiCard = AnalysisCard(
+              round: r,
+              cardId: aiId,
+              cardName: CardInfo.fromId(aiId)?.name ?? '',
+            );
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 36,
+                    child: Text('${r}R',
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: _gray)),
+                  ),
+                  Expanded(child: _buildCardChip(aiCard, highlight: aiHit)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _buildCardChip(mine)),
+                  SizedBox(
+                    width: 56,
+                    child: Text(
+                      verdict,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: aiHit ? const Color(0xFF0F6E56) : _gray),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          const SizedBox(height: 8),
+          const Text(
+            'AI 예측은 그때까지의 시장만 보고 한 것이고, 1위 조합은 게임이 끝난 뒤 '
+            '전체 시장으로 계산한 결과예요. 미래를 모르면 예측이 틀릴 수 있어요. '
+            '"후보 밖"은 1위 조합의 카드가 그 라운드 후보 3장에 없었다는 뜻이에요.',
+            style: TextStyle(fontSize: 10.5, color: _gray, height: 1.5),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRateColumn(String label, double rate) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,7 +774,7 @@ class _GameResultScreenState extends State<GameResultScreen>
     );
   }
 
-  // ③ 이 시나리오의 최적 조합 Top N
+  // ④ 이 시나리오의 최적 조합 Top N
   Widget _buildTopCombosCard(ResultAnalysis a) {
     // 서버가 최종 자산이 같은 조합을 하나로 묶어 보내므로(tiedCount, PR #78)
     // 순위가 1위 → 7위처럼 건너뛸 수 있음 → 그때만 이유를 안내
