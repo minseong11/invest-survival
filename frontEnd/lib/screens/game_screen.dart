@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import '../models/game_session.dart';
 import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
+import '../models/fixed_ranking.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
 import '../services/mock_data.dart';
@@ -48,6 +50,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   List<CardRanking> _lastRankings       = []; // 피드백 요청 시 재사용
   bool             _aiRequested         = false;
 
+  // 라운드별 AI 예측 1순위 (결과 화면에서 '내 선택'과 비교)
+  final Map<int, int> _aiPicks = {};
+  final Map<int, List<int>> _aiCandidates = {}; // 그때 받은 후보 카드 3장
+
   Timer? _autoTimer;
 
   // 총 자산 카운트업 애니메이션
@@ -85,20 +91,29 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
 
-  // 1·75라운드: AI 추천을 제공하지 않는 이유 (v6.1 합의 1번)
+  // 1·75라운드: AI 예측을 제공하지 않는 이유 (v6.1 합의 1번)
   //  - 1라운드: so_far 시장 데이터가 없어 V2가 판단할 근거가 없음
-  //  - 75라운드: 데이터는 있지만 검증 결과 순위 예측이 맞지 않음 (스피어만 ρ=-0.12)
+  //  - 75라운드: 남은 라운드가 적어 카드 간 결과 차이가 작음
   String? get _noAiReason {
     if (_currentRound1 == 1) {
-      return '아직 시장 데이터가 없어 이 라운드는 AI 추천을 제공하지 않아요';
+      return '아직 시장 데이터가 없어 이 라운드는 AI 예측을 제공하지 않아요';
     }
     if (_currentRound1 == 75) {
-      return '검증 결과 이 시점의 추천 정확도가 낮아 AI 추천을 제공하지 않아요';
+      return '남은 라운드가 적어 카드 간 결과 차이가 작기 때문에 AI 예측을 제공하지 않아요';
     }
     return null;
   }
 
-  // AI 추천 카드 ID (V2 결과만 사용. V1.5 사전 추천은 v6.0에서 제거)
+  // 25·50라운드: V2는 정답 추천이 아니라 참고 예측임을 안내 (중간보고서 4장 평가 결과 반영)
+  static const String _v2Notice =
+      'AI 예측은 과거 시장으로 학습한 참고용이에요. '
+      '처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요.';
+
+  // 지금 후보 카드들의 평소 순위 (시장을 보지 않는 고정 순위)
+  List<int> get _fixedOrder =>
+      FixedRanking.order(_currentRound1, _currentCardOptions);
+
+  // AI 예측 1순위 카드 ID (V2 결과만 사용. V1.5 사전 추천은 v6.0에서 제거)
   int? get _aiRecommendedCardId {
     if (!_aiRequested || _aiState != AiState.done) return null;
     return _v2RecommendedCardId;
@@ -172,6 +187,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       }
       setState(() {
         _v2RecommendedCardId = result.recommendedCardId;
+        _aiPicks[_currentRound1] = result.recommendedCardId;
+        _aiCandidates[_currentRound1] = List.from(_currentCardOptions);
         _contributions       = contribs;
         _lastRankings        = result.rankings;
         _aiFeedback          = result.feedback; // v5.0: recommend 응답에 함께 포함
@@ -200,7 +217,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void _onFeedbackButtonTap() {
     if (_aiState != AiState.done || _aiFeedback.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('먼저 "AI 추천받기"를 눌러주세요'),
+        content: Text('먼저 "AI 예측 보기"를 눌러주세요'),
         behavior: SnackBarBehavior.floating,
       ));
       return;
@@ -244,7 +261,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     ),
                     const SizedBox(width: 8),
                     const Expanded(
-                      child: Text('AI 투자 코치',
+                      child: Text('AI 예측 설명',
                           style: TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.w700,
@@ -351,7 +368,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-          builder: (_) => GameResultScreen(session: _session)),
+          builder: (_) => GameResultScreen(
+                session: _session,
+                aiPicks: Map<int, int>.from(_aiPicks),
+                aiCandidates: Map<int, List<int>>.from(_aiCandidates),
+              )),
     );
   }
 
@@ -451,10 +472,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         child: Column(
           children: [
             _buildHeader(),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: _buildMockButton(),
-            ),
+            // 개발용 버튼: 디버그 실행에서만 표시 (릴리스·데모 빌드에서는 숨김)
+            if (kDebugMode)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 20),
+                child: _buildMockButton(),
+              ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 6, 20, 20),
@@ -719,7 +742,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       fontWeight: FontWeight.w600,
                       color: Color(0xFF6B7684))),
               const Spacer(),
-              // AI 피드백·AI 추천 버튼: 25·50라운드만 표시
+              // AI 설명·AI 예측 버튼: 25·50라운드만 표시
               // (피드백은 V2 추천 응답에 포함되므로, 추천이 없는 1·75라운드에선 의미 없음)
               if (_canUseV2) ...[
                 _buildFeedbackButton(),
@@ -735,6 +758,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _buildNoAiNotice(_noAiReason!),
           ],
 
+          // 25·50라운드: 평소 순위 + 예측 안내 (한 박스로 묶어 화면 높이 최소화)
+          if (_canUseV2) ...[
+            const SizedBox(height: 8),
+            _buildV2Info(_fixedOrder),
+          ],
+
           // 로딩 바
           if (_aiState == AiState.loading) ...[
             const SizedBox(height: 6),
@@ -748,7 +777,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 3),
-            const Text('AI가 최적 카드를 분석 중입니다...',
+            const Text('과거 데이터로 예측하는 중이에요...',
                 style: TextStyle(
                     fontSize: 9, color: Color(0xFF534AB7)),
                 textAlign: TextAlign.center),
@@ -809,6 +838,59 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
+  // ── 평소 순위 (고정 순위) + AI 예측 안내 ──
+  // 평소 순위 = 학습 데이터(2006~2018)에서 이 라운드에 각 카드가 낸 평균 성과 순서.
+  // 지금 시장은 보지 않음 → AI 예측과 비교해 보라는 의미로 함께 표시
+  // (fixed_ranking.dart가 아직 생성 전이면 평소 순위 줄은 생략)
+  Widget _buildV2Info(List<int> order) {
+    final names = order
+        .map((id) => CardInfo.fromId(id)?.name ?? '카드 $id')
+        .join(' > ');
+    const textStyle =
+        TextStyle(fontSize: 10.5, color: Color(0xFF6B7684), height: 1.4);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F4F6),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 1),
+            child: Icon(Icons.info_outline_rounded,
+                size: 13, color: Color(0xFF6B7684)),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (order.isNotEmpty)
+                  Text.rich(
+                    TextSpan(children: [
+                      const TextSpan(
+                          text: '평소 순위  ',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF333333))),
+                      TextSpan(
+                          text: names,
+                          style: const TextStyle(color: Color(0xFF333333))),
+                    ]),
+                    style: textStyle,
+                  ),
+                const Text(_v2Notice, style: textStyle),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── AI 버튼 ────────────────────────────────
   // ── AI 피드백 버튼 (메모지 다이얼로그 열기) ──
   Widget _buildFeedbackButton() {
@@ -827,7 +909,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             Icon(Icons.chat_bubble_outline_rounded,
                 size: 12, color: Color(0xFF3C3489)),
             SizedBox(width: 4),
-            Text('AI 피드백',
+            Text('AI 설명',
                 style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
@@ -855,7 +937,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               children: [
                 Text('✨', style: TextStyle(fontSize: 12)),
                 SizedBox(width: 4),
-                Text('AI 추천받기',
+                Text('AI 예측 보기',
                     style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
@@ -883,7 +965,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                         AlwaysStoppedAnimation(Colors.white)),
               ),
               SizedBox(width: 6),
-              Text('분석 중...',
+              Text('예측 중...',
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -904,7 +986,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             children: [
               Text('✅', style: TextStyle(fontSize: 12)),
               SizedBox(width: 4),
-              Text('추천 완료',
+              Text('예측 완료',
                   style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
@@ -974,7 +1056,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           color: const Color(0xFFE03131),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Text('AI 추천',
+                        child: const Text('AI 예측 1위',
                             style: TextStyle(
                                 fontSize: 9,
                                 fontWeight: FontWeight.w700,
@@ -1000,11 +1082,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     color: Color(0xFF534AB7),
                     height: 1.4)),
 
-            // 기여도: 추천 완료 후에만
+            // 예측 기여도: 예측 완료 후에만
             if (showContrib) ...[
               const SizedBox(height: 6),
               Text(
-                '${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(2)}%',
+                '예측 ${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(2)}%',
                 style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,

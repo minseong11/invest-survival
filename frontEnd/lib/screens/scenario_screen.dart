@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import '../models/scenario.dart';
 import '../models/game_session.dart';
@@ -104,8 +105,11 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
             children: [
               _buildHeader(),
               const SizedBox(height: 20),
-              _buildMockButtons(),
-              const SizedBox(height: 20),
+              // 개발용 버튼: 디버그 실행에서만 표시
+              if (kDebugMode) ...[
+                _buildMockButtons(),
+                const SizedBox(height: 20),
+              ],
               Expanded(child: _buildBody()),
             ],
           ),
@@ -221,19 +225,21 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
                   onPressed: _loadScenarios,
                   child: const Text('다시 시도'),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _loadMockScenarios,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF111111),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+                if (kDebugMode) ...[
+                  const SizedBox(width: 8),
+                  ElevatedButton(
+                    onPressed: _loadMockScenarios,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF111111),
+                      foregroundColor: Colors.white,
+                      elevation: 0,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
                     ),
+                    child: const Text('임시 데이터로 계속', style: TextStyle(fontSize: 13)),
                   ),
-                  child: const Text('임시 데이터로 계속', style: TextStyle(fontSize: 13)),
-                ),
+                ],
               ],
             ),
           ],
