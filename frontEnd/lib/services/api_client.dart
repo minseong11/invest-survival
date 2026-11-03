@@ -4,7 +4,8 @@ class ApiClient {
   //static const String _baseUrl = 'http://172.22.165.231:8080';
   //static const String _baseUrl = 'http://172.18.16.192:8080';
   //static const String _baseUrl = 'http://172.18.81.118:8080';정민기
-  static const String _baseUrl = 'http://172.18.107.48:8080';
+  //static const String _baseUrl = 'http://172.18.107.48:8080';
+    static const String _baseUrl = 'http://localhost:8080';
 
   
 
