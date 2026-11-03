@@ -19,9 +19,13 @@ import fastapi_server as fs
 MARKET = dict(spxReturnSoFar=-17.27, spxVolatilitySoFar=3.28, spxMddSoFar=-20.5, currentRound=25)
 
 
-def req(card_ids, already=(1,)):
+# 실제 서버처럼 소수 4자리로 오는 시장 값 (10주차: 닷컴 25라운드 실기 테스트에서 오탐 발견)
+MARKET_4DP = dict(spxReturnSoFar=-13.1912, spxVolatilitySoFar=2.8471, spxMddSoFar=-33.9306, currentRound=25)
+
+
+def req(card_ids, already=(1,), market=MARKET):
     contribs = [1.26, 0.14, -3.22]
-    return dict(**MARKET, alreadyCards=list(already),
+    return dict(**market, alreadyCards=list(already),
                 rankings=[{'rank': i + 1, 'cardId': c, 'contribution': contribs[i]}
                           for i, c in enumerate(card_ids)])
 
@@ -49,6 +53,11 @@ CASES = [
      [3, 8, 2], 'llm'),
     ('조건 없는 카드를 "언제 유리한지"만 설명 → 통과',
      '황금 적립은 하락장일 때 유리할 수 있어요.', [2, 8, 3], 'llm'),
+    ('정상: 서버 값(소수 4자리)을 소수 2자리로 반올림 → 통과',
+     '현재 SPX 누적수익률이 -13.19%이고 MDD가 -33.93%에 달하는 하락장이라, 금 피난처 같은 안전자산이 '
+     '포트폴리오 손실을 완충할 수 있어요.', [4, 8, 2], 'llm', MARKET_4DP),
+    ('정수로 반올림(-13.19 → 13%) → 대체 (카드 조건 % 오인 방지)',
+     '현재 SPX 누적수익률이 -13%인 하락장이라 금 피난처가 유리할 수 있어요.', [4, 8, 2], 'fallback', MARKET_4DP),
 ]
 
 
@@ -62,9 +71,9 @@ def fake_llm(text):
 def main():
     fail = 0
     with TestClient(fs.app) as c:
-        for name, llm_text, cards, expected in CASES:
+        for name, llm_text, cards, expected, *market in CASES:
             fs.client.messages.create = fake_llm(llm_text)
-            r = c.post('/ai/v2/feedback', json=req(cards)).json()
+            r = c.post('/ai/v2/feedback', json=req(cards, market=market[0] if market else MARKET)).json()
             ok = r['status'] == expected
             fail += not ok
             print('=' * 70)

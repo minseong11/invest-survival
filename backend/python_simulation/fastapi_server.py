@@ -339,13 +339,20 @@ def unexpected_numbers(text: str, req: V2FeedbackRequest) -> List[str]:
     """
     LLM 설명에 나온 (단위가 붙은) 숫자 중 서버가 준 값이 아닌 것.
     카드 조건 %·비율·횟수를 LLM이 지어내거나 틀리게 옮기면 여기서 걸린다 (GAP 1~5).
-    소수 첫째 자리 반올림 표기(-17.27 → -17.3)까지만 허용.
+    서버 값(소수 4자리)을 LLM이 소수 1~4자리로 반올림해 쓴 경우는 허용한다
+    (-13.1912 → 13.19, 13.2). 정수로 쓴 경우는 정확히 같을 때만 허용한다
+    — 정수 반올림까지 허용하면 카드 조건(-3%, -5% 등)이 우연히 통과할 수 있음 (GAP 1~5).
     """
     allowed = allowed_numbers(req)
     bad = []
     for m in _NUM_RE.finditer(text):
-        v = float(m.group(1))
-        ok = any(abs(v - a) < 1e-9 or abs(v - round(a, 1)) < 1e-9 for a in allowed)
+        raw = m.group(1)
+        v = float(raw)
+        digits = len(raw.split('.')[1]) if '.' in raw else 0
+        ok = any(
+            abs(v - a) < 1e-9 or (digits >= 1 and abs(v - round(a, digits)) < 1e-9)
+            for a in allowed
+        )
         if not ok:
             bad.append(m.group(0))
     return bad
