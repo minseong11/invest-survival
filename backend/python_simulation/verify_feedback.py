@@ -23,8 +23,8 @@ from typing import List, Dict, Optional
 
 # =============================================
 # 카드 사실 정보 (구조화) — game_logic.py CARDS 기준
-# CARD_LOGIC(사람이 읽는 문장)은 이 구조에서 자동 생성해서 쓰는 걸 권장.
-# 문장과 구조가 따로 놀면 검증 자체가 무의미해지기 때문.
+# (10주차) 카드 규칙의 단일 원천. FastAPI의 카드 이름·LLM 프롬프트·화면 카드 규칙·검증기가 모두 이 값을 쓴다.
+# 카드 규칙을 바꿀 때는 game_logic.py CARDS와 이 표만 함께 고치면 된다.
 # =============================================
 @dataclass
 class CardFact:
@@ -41,7 +41,7 @@ class CardFact:
 
 CARD_FACTS: Dict[int, CardFact] = {
     1: CardFact(1, '거인의 어깨', '^SPX', 'ONCE',
-                '1라운드 즉시 현금 30% SPX 매수 (1회성)',
+                '고른 라운드에 즉시 현금 30% SPX 매수 (1회성)',
                 threshold_pcts=[], buy_ratio_pct=30, max_trigger=1),
     2: CardFact(2, '황금 적립', 'GLD', 'UNCONDITIONAL',
                 '매 라운드 조건 없이 현금 5%씩 GLD 매수 (무제한)',
@@ -59,7 +59,7 @@ CARD_FACTS: Dict[int, CardFact] = {
                 'NDX -4% 이하일 때 현금 25% NDX 매수 (최대 3회)',
                 threshold_pcts=[-4], buy_ratio_pct=25, max_trigger=3),
     7: CardFact(7, '원유 베팅', 'USO', 'ONCE',
-                '1라운드 즉시 현금 20% USO 매수 (1회성)',
+                '고른 라운드에 즉시 현금 20% USO 매수 (1회성)',
                 threshold_pcts=[], buy_ratio_pct=20, max_trigger=1),
     8: CardFact(8, '역발상 투자', '^SPX', 'CONDITION',
                 'SPX +3% 이상일 때마다 보유 SPX 물량 15% 매도',
