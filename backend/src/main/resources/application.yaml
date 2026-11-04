@@ -22,3 +22,9 @@ spring:
     ai:
       server:
         url: http://localhost:8000
+
+# 주가 CSV 폴더
+# - 상대 경로는 서버를 실행한 폴더 기준 (backend/에서 실행하면 backend/data)
+# - 다른 폴더에서 실행하면 절대 경로로 지정 (예: /Users/mg/Documents/GitHub/invest-survival/backend/data)
+data:
+  csv-dir: data

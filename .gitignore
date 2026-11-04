@@ -4,3 +4,8 @@ backend/data/
 backend/.gradle/
 backend/build/
 backend/.idea/workspace.xml
+
+.DS_Store
+backend/.gradle/
+backend/.idea/
+backend/build/
