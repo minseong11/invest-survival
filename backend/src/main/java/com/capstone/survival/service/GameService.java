@@ -61,9 +61,15 @@ public class GameService {
         );
         sessionRepository.save(session);
 
-        StockPrice first = priceList.get(0);
+        // 1라운드 가격은 시나리오 기준 종목과 관계없이 S&P500으로 반환
+        // (2라운드 이후 calculateRounds()와 같은 기준 — 닷컴(^NDX)에서 차트 첫 점이 빠지던 문제 수정)
+        List<StockPrice> spxList = loadPriceList(session, "^SPX");
+        if (spxList.isEmpty()) {
+            throw new IllegalStateException("주가 데이터가 부족합니다 (S&P500)");
+        }
+        StockPrice first = spxList.get(0);
         Map<String, Object> priceData = new LinkedHashMap<>();
-        priceData.put("ticker", first.getTicker());
+        priceData.put("ticker", "^SPX");
         priceData.put("open", first.getOpen());
         priceData.put("close", first.getClose());
         priceData.put("high", first.getHigh());
