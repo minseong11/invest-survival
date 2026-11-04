@@ -1,3 +1,9 @@
 pandas
 numpy
 anthropic
+fastapi
+uvicorn
+httpx
+xgboost
+scikit-learn
+scipy
