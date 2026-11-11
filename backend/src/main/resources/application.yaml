@@ -19,9 +19,11 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
     defer-datasource-initialization: true
 
-    ai:
-      server:
-        url: http://localhost:8000
+# FastAPI AI 서버 주소 (GameService의 ${ai.server.url})
+# - 예전에는 jpa: 아래에 들여쓰기돼 있어서 이 값이 적용되지 않고 코드 기본값이 쓰였음
+ai:
+  server:
+    url: http://localhost:8000
 
 # 주가 CSV 폴더
 # - 상대 경로는 서버를 실행한 폴더 기준 (backend/에서 실행하면 backend/data)
