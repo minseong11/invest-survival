@@ -59,6 +59,10 @@ public class GameService {
                 sessionId, scenarioId, scenario.getTitle(),
                 scenario.getTicker(), priceList.get(0).getTradeDate().toString()
         );
+
+        // 1라운드 후보를 만들고 세션에 저장 (카드 선택 시 검증 + 사후 분석에 사용)
+        List<Integer> firstCardOptions = getRandomCards(new ArrayList<>(), getUnavailableCardIds(session));
+        recordOfferedCards(session, 1, firstCardOptions);
         sessionRepository.save(session);
 
         // 1라운드 가격은 시나리오 기준 종목과 관계없이 S&P500으로 반환
@@ -87,7 +91,7 @@ public class GameService {
         response.put("totalRounds", 100);
         response.put("initialAsset", INITIAL_ASSET);
         response.put("cardSelectRounds", CARD_SELECT_ROUNDS);
-        response.put("firstCardOptions", getRandomCards(new ArrayList<>(), getUnavailableCardIds(session)));
+        response.put("firstCardOptions", firstCardOptions);
         response.put("rounds", List.of(firstRound));
 
         return response;
@@ -416,6 +420,12 @@ public class GameService {
             throw new IllegalArgumentException("이미 종료된 게임입니다");
         }
 
+        // (11주차) 지금 카드를 고를 차례인 라운드인지 확인 (같은 라운드 재선택·라운드 건너뛰기 방지)
+        if (round == null || !round.equals(session.getCurrentRound())) {
+            throw new IllegalArgumentException(
+                    "지금은 " + session.getCurrentRound() + "라운드 카드를 고를 차례입니다 (요청: " + round + "라운드)");
+        }
+
         Card card = cardRepository.findById(cardId)
                 .orElseThrow(() -> new IllegalArgumentException("존재하지 않는 카드입니다"));
 
@@ -427,6 +437,17 @@ public class GameService {
         List<Integer> appliedCardIds = getAppliedCardIds(session);
         if (appliedCardIds.contains(cardId)) {
             throw new IllegalArgumentException("이미 선택한 카드입니다");
+        }
+
+        // (11주차) 이 라운드에 제시한 후보 3장 중 하나인지 확인
+        // 후보 기록이 아예 없는 세션(이 기능 배포 전에 시작한 게임)은 검사하지 않음
+        Map<Integer, List<Integer>> offeredMap = parseOfferedCards(session.getOfferedCards());
+        if (!offeredMap.isEmpty()) {
+            List<Integer> offeredNow = offeredMap.get(round);
+            if (offeredNow == null || !offeredNow.contains(cardId)) {
+                throw new IllegalArgumentException(
+                        "이번 라운드에 제시된 카드가 아닙니다 (제시된 후보: " + offeredNow + ")");
+            }
         }
 
         appliedCardIds.add(cardId);
@@ -488,11 +509,15 @@ public class GameService {
         if (nextEventRound == null) {   // 마지막 카드 선택(75R) → 100라운드까지 계산 완료
             session.finish();
         }
-        sessionRepository.save(session);
 
+        // 다음 라운드 후보를 만들고 세션에 저장한 뒤 한 번에 save
         List<Integer> nextCardOptions = nextEventRound != null
                 ? getRandomCards(appliedCardIds, unavailableCardIds)
                 : null;
+        if (nextCardOptions != null) {
+            recordOfferedCards(session, nextEventRound, nextCardOptions);
+        }
+        sessionRepository.save(session);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("selectedCard", card.getName());
@@ -531,6 +556,17 @@ public class GameService {
         requestBody.put("playerCardSelections", playerSelections);
         requestBody.put("topN", 3);
 
+        // (11주차) 라운드별 제시 후보 → "받은 후보 안에서의 최선" 분석용
+        // 4개 라운드 후보가 모두 기록된 세션만 보냄 (이전 세션은 기존 분석만)
+        Map<Integer, List<Integer>> offeredMap = parseOfferedCards(session.getOfferedCards());
+        if (offeredMap.keySet().containsAll(CARD_SELECT_ROUNDS)) {
+            Map<String, List<Integer>> offeredJson = new LinkedHashMap<>();
+            for (Integer r : CARD_SELECT_ROUNDS) {
+                offeredJson.put(String.valueOf(r), offeredMap.get(r));
+            }
+            requestBody.put("offeredCards", offeredJson);
+        }
+
         // 사후 분석은 부가 정보 → 실패해도 결과 화면은 정상 표시되도록 null 반환
         try {
             HttpHeaders headers = new HttpHeaders();
@@ -557,11 +593,63 @@ public class GameService {
             result.put("cardPoolSize", body.get("cardPoolSize"));   // 사용 가능 카드 수 (상장 전 종목 제외)
             result.put("topCombos", topCombos);
             result.put("playerResult", enrichCombo((Map<String, Object>) body.get("playerResult")));
+
+            // (11주차) 받은 후보 안 분석 — 이 부분만 실패해도 기존 전체 조합 결과는 그대로 반환
+            Map<String, Object> offeredAnalysis = null;
+            try {
+                Object oa = body.get("offeredAnalysis");
+                if (oa instanceof Map) {
+                    offeredAnalysis = enrichOfferedAnalysis((Map<String, Object>) oa);
+                }
+            } catch (Exception ignored) {
+                offeredAnalysis = null;
+            }
+            result.put("offeredAnalysis", offeredAnalysis);
             return result;
 
         } catch (Exception e) {
             return null;
         }
+    }
+
+    // 받은 후보 안 분석 결과에 카드 이름 붙이기
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> enrichOfferedAnalysis(Map<String, Object> src) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("totalCombinations", src.get("totalCombinations"));   // 받은 후보로 만들 수 있는 조합 수 (최대 81)
+        out.put("bestCombo", enrichCombo((Map<String, Object>) src.get("bestCombo")));
+        out.put("playerResult", enrichCombo((Map<String, Object>) src.get("playerResult")));
+
+        List<Map<String, Object>> roundAlternatives = new ArrayList<>();
+        for (Map<String, Object> ra : (List<Map<String, Object>>) src.get("roundAlternatives")) {
+            Integer playerCardId = ((Number) ra.get("playerCardId")).intValue();
+
+            List<Map<String, Object>> alternatives = new ArrayList<>();
+            for (Map<String, Object> alt : (List<Map<String, Object>>) ra.get("alternatives")) {
+                Integer altCardId = ((Number) alt.get("cardId")).intValue();
+                Map<String, Object> a = new LinkedHashMap<>();
+                a.put("cardId", altCardId);
+                a.put("cardName", cardName(altCardId));
+                a.put("finalAsset", alt.get("finalAsset"));
+                a.put("finalReturnRate", alt.get("finalReturnRate"));
+                a.put("diffReturnRate", alt.get("diffReturnRate"));   // 대안 - 내 결과 (%p, +면 대안이 더 좋음)
+                alternatives.add(a);
+            }
+
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("round", ra.get("round"));
+            r.put("offeredCards", ra.get("offeredCards"));
+            r.put("playerCardId", playerCardId);
+            r.put("playerCardName", cardName(playerCardId));
+            r.put("alternatives", alternatives);
+            roundAlternatives.add(r);
+        }
+        out.put("roundAlternatives", roundAlternatives);
+        return out;
+    }
+
+    private String cardName(Integer cardId) {
+        return cardRepository.findById(cardId).map(Card::getName).orElse("");
     }
 
     // cardSelections {"1":7,"25":3,...} → cards [{round, cardId, cardName}, ...]
@@ -989,6 +1077,41 @@ public class GameService {
         return Arrays.stream(session.getAppliedCards().split(","))
                 .map(Integer::parseInt)
                 .collect(Collectors.toList());
+    }
+
+    // =============================================
+    // 라운드별 제시 후보 (11주차)
+    // =============================================
+    // "1:3,4,10|25:7,8,2" → {1: [3,4,10], 25: [7,8,2]}
+    private Map<Integer, List<Integer>> parseOfferedCards(String str) {
+        Map<Integer, List<Integer>> map = new LinkedHashMap<>();
+        if (str == null || str.isBlank()) return map;
+        for (String entry : str.split("\\|")) {
+            String[] parts = entry.split(":");
+            if (parts.length != 2 || parts[1].isBlank()) continue;
+            List<Integer> ids = Arrays.stream(parts[1].split(","))
+                    .map(String::trim)
+                    .map(Integer::parseInt)
+                    .collect(Collectors.toList());
+            map.put(Integer.parseInt(parts[0].trim()), ids);
+        }
+        return map;
+    }
+
+    private String serializeOfferedCards(Map<Integer, List<Integer>> map) {
+        return map.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(e -> e.getKey() + ":" + e.getValue().stream()
+                        .map(String::valueOf)
+                        .collect(Collectors.joining(",")))
+                .collect(Collectors.joining("|"));
+    }
+
+    // 해당 라운드 후보를 세션에 기록 (같은 라운드가 이미 있으면 덮어씀)
+    private void recordOfferedCards(GameSession session, int round, List<Integer> cardIds) {
+        Map<Integer, List<Integer>> map = parseOfferedCards(session.getOfferedCards());
+        map.put(round, new ArrayList<>(cardIds));
+        session.updateOfferedCards(serializeOfferedCards(map));
     }
 
     private Map<Integer, Integer> parseTriggerCount(String str) {
