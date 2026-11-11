@@ -46,6 +46,16 @@ public class GameSession {
     // ↑ (11주차) 라운드별로 제시한 카드 후보 "1:3,4,10|25:7,8,2|50:...|75:..."
     //   카드 선택 검증과 사후 분석("받은 후보 안에서의 최선")에 사용
 
+    // (11주차) 종목별 총 매수금액(원가, 원) — 평균 단가 = 원가 ÷ 수량
+    //   매수 시 매수금액만큼 증가, 매도 시 매도 비율만큼 감소 (평균 단가 유지)
+    //   이 기능 배포 전에 만든 세션은 null → 0으로 취급
+    private Double spxCost;
+    private Double ndxCost;
+    private Double xauusdCost;
+    private Double usoCost;
+    private Double aaplCost;
+    private Double tltCost;
+
     public GameSession(String sessionId, Integer scenarioId,
                        String scenarioTitle, String ticker,
                        String gameStartDate) {
@@ -69,6 +79,23 @@ public class GameSession {
         this.appliedCards = "";
         this.triggerCount = "";
         this.offeredCards = "";
+        this.spxCost = 0.0;
+        this.ndxCost = 0.0;
+        this.xauusdCost = 0.0;
+        this.usoCost = 0.0;
+        this.aaplCost = 0.0;
+        this.tltCost = 0.0;
+    }
+
+    // 종목별 원가 갱신
+    public void updateCosts(Double spxCost, Double ndxCost, Double xauusdCost,
+                            Double usoCost, Double aaplCost, Double tltCost) {
+        this.spxCost = spxCost;
+        this.ndxCost = ndxCost;
+        this.xauusdCost = xauusdCost;
+        this.usoCost = usoCost;
+        this.aaplCost = aaplCost;
+        this.tltCost = tltCost;
     }
 
     // 라운드별 제시 후보 갱신 (직렬화는 GameService에서)

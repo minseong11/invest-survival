@@ -35,6 +35,17 @@ public class GameService {
     private static final List<Integer> ALL_CARD_IDS = List.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
     private static final long INITIAL_ASSET = 10_000_000L;
 
+    // (11주차) 보유 종목 표시용 — 순서 = 응답 holdings 순서
+    private static final List<String> TICKERS = List.of("^SPX", "^NDX", "XAUUSD", "USO", "AAPL", "TLT");
+    private static final Map<String, String> TICKER_NAMES = Map.of(
+            "^SPX", "S&P500",
+            "^NDX", "나스닥100",
+            "XAUUSD", "금",
+            "USO", "원유",
+            "AAPL", "애플",
+            "TLT", "미국 장기채"
+    );
+
     // =============================================
     // 게임 시작
     // =============================================
@@ -84,6 +95,9 @@ public class GameService {
         firstRound.put("round", 1);
         firstRound.put("date", first.getTradeDate().toString());
         firstRound.put("priceData", List.of(priceData));
+        firstRound.put("holdings", new ArrayList<>());   // 시작 시 보유 종목 없음
+        firstRound.put("cash", INITIAL_ASSET);
+        firstRound.put("cashWeight", 100.0);
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("sessionId", sessionId);
@@ -462,6 +476,7 @@ public class GameService {
         double aaplShares = session.getAaplShares();
         double tltShares = session.getTltShares();
         long cash = session.getCash();
+        Map<String, Double> costs = loadCosts(session);   // 종목별 원가 (calculateRounds에서 갱신됨)
 
         double currentClose = "BUY_ONCE".equals(card.getType())
                 ? getPriceAtRound(session, round, card.getTicker()) : 0;
@@ -469,6 +484,7 @@ public class GameService {
             double buyAmount = cash * card.getRatio();
             cash -= (long) buyAmount;
             double newShares = buyAmount / currentClose;
+            costs.merge(card.getTicker(), buyAmount, Double::sum);
             if ("^SPX".equals(card.getTicker()))      spxShares += newShares;
             else if ("^NDX".equals(card.getTicker()))  ndxShares += newShares;
             else if ("XAUUSD".equals(card.getTicker())) xauusdShares += newShares;
@@ -488,7 +504,7 @@ public class GameService {
                 session, round, endRound,
                 cash, spxShares, ndxShares, xauusdShares,
                 usoShares, aaplShares, tltShares,
-                appliedCardIds, session.getTriggerCount()
+                appliedCardIds, session.getTriggerCount(), costs
         );
 
         List<Map<String, Object>> rounds = (List<Map<String, Object>>) calcResult.get("rounds");
@@ -506,6 +522,8 @@ public class GameService {
                 finalUso, finalAapl, finalTlt,
                 endRound + 1, newAppliedCards, finalTriggerCount
         );
+        session.updateCosts(costs.get("^SPX"), costs.get("^NDX"), costs.get("XAUUSD"),
+                costs.get("USO"), costs.get("AAPL"), costs.get("TLT"));
         if (nextEventRound == null) {   // 마지막 카드 선택(75R) → 100라운드까지 계산 완료
             session.finish();
         }
@@ -700,6 +718,7 @@ public class GameService {
         double usoShares = 0, aaplShares = 0, tltShares = 0;
         List<Integer> appliedCardIds = new ArrayList<>();
         String triggerCount = "";
+        Map<String, Double> costs = emptyCosts();
 
         List<Map<String, Object>> allRounds = new ArrayList<>();
 
@@ -720,6 +739,7 @@ public class GameService {
                     double buyAmount = cash * card.getRatio();
                     cash -= (long) buyAmount;
                     double shares = buyAmount / price;
+                    costs.merge(card.getTicker(), buyAmount, Double::sum);
                     if ("^SPX".equals(card.getTicker()))       spxShares    += shares;
                     else if ("^NDX".equals(card.getTicker()))   ndxShares    += shares;
                     else if ("XAUUSD".equals(card.getTicker())) xauusdShares += shares;
@@ -737,7 +757,7 @@ public class GameService {
                     session, selectRound, endRound,
                     cash, spxShares, ndxShares, xauusdShares,
                     usoShares, aaplShares, tltShares,
-                    new ArrayList<>(appliedCardIds), triggerCount
+                    new ArrayList<>(appliedCardIds), triggerCount, costs
             );
 
             List<Map<String, Object>> segmentRounds = (List<Map<String, Object>>) calcResult.get("rounds");
@@ -773,7 +793,9 @@ public class GameService {
             GameSession session, int startRound, int endRound,
             long cash, double spxShares, double ndxShares, double xauusdShares,
             double usoShares, double aaplShares, double tltShares,
-            List<Integer> appliedCardIds, String triggerCountStr) {
+            List<Integer> appliedCardIds, String triggerCountStr,
+            Map<String, Double> costs) {
+        // costs: 종목별 원가 — 이 메서드 안에서 매수·매도에 맞춰 직접 갱신됨 (호출한 쪽 맵에 반영)
 
         // 모든 종목을 SPX 거래일 기준으로 정렬 (i번째 = SPX의 i번째 거래일, 상장 전이면 null)
         List<StockPrice> spxList    = loadPriceList(session, "^SPX");
@@ -852,6 +874,8 @@ public class GameService {
                             double sellShares = spxShares * card.getRatio();
                             cash += (long)(sellShares * spxCurrent.getClose());
                             spxShares -= sellShares;
+                            // 원가도 같은 비율만큼 감소 → 평균 단가(원가 ÷ 수량) 그대로
+                            costs.put("^SPX", costs.getOrDefault("^SPX", 0.0) * (1 - card.getRatio()));
                         }
                         triggeredCardIds.add(card.getId());
                         continue;
@@ -865,6 +889,7 @@ public class GameService {
 
                     cash -= (long) amount;
                     double shares = amount / price;
+                    costs.merge(card.getTicker(), amount, Double::sum);
                     if ("^SPX".equals(card.getTicker()))       spxShares    += shares;
                     else if ("^NDX".equals(card.getTicker()))   ndxShares    += shares;
                     else if ("XAUUSD".equals(card.getTicker())) xauusdShares += shares;
@@ -938,6 +963,17 @@ public class GameService {
             roundMap.put("roundAsset", roundAsset);
             roundMap.put("returnRate", Math.round(returnRate * 100.0) / 100.0);
             roundMap.put("triggeredCards", triggeredCardIds);
+
+            // (11주차) 보유 종목 평균 단가·누적 수익률·비중 + 현금 비중
+            Map<String, Double> sharesNow = new LinkedHashMap<>();
+            sharesNow.put("^SPX", spxShares);    sharesNow.put("^NDX", ndxShares);
+            sharesNow.put("XAUUSD", xauusdShares); sharesNow.put("USO", usoShares);
+            sharesNow.put("AAPL", aaplShares);   sharesNow.put("TLT", tltShares);
+            Map<String, StockPrice> pricesNow = new HashMap<>();
+            pricesNow.put("^SPX", spxCurrent);    pricesNow.put("^NDX", ndxCurrent);
+            pricesNow.put("XAUUSD", xauusdCurrent); pricesNow.put("USO", usoCurrent);
+            pricesNow.put("AAPL", aaplCurrent);   pricesNow.put("TLT", tltCurrent);
+            putPortfolio(roundMap, cash, roundAsset, sharesNow, pricesNow, costs);
             rounds.add(roundMap);
         }
 
@@ -997,6 +1033,77 @@ public class GameService {
             case "TLT"    -> tlt    != null ? tlt.getClose()    : 0;
             default -> 0;
         };
+    }
+
+    // =============================================
+    // 보유 종목 (11주차)
+    // =============================================
+    private Map<String, Double> emptyCosts() {
+        Map<String, Double> costs = new LinkedHashMap<>();
+        for (String t : TICKERS) costs.put(t, 0.0);
+        return costs;
+    }
+
+    // 세션의 종목별 원가 (배포 전 세션은 null → 0)
+    private Map<String, Double> loadCosts(GameSession session) {
+        Map<String, Double> costs = emptyCosts();
+        costs.put("^SPX",   orZero(session.getSpxCost()));
+        costs.put("^NDX",   orZero(session.getNdxCost()));
+        costs.put("XAUUSD", orZero(session.getXauusdCost()));
+        costs.put("USO",    orZero(session.getUsoCost()));
+        costs.put("AAPL",   orZero(session.getAaplCost()));
+        costs.put("TLT",    orZero(session.getTltCost()));
+        return costs;
+    }
+
+    private double orZero(Double v) {
+        return v != null ? v : 0.0;
+    }
+
+    private double round2(double v) {
+        return Math.round(v * 100.0) / 100.0;
+    }
+
+    // roundMap에 holdings, cash, cashWeight 추가
+    // - holdings: 수량이 있는 종목만, TICKERS 순서
+    // - returnRate: 평균 단가 대비 누적 수익률 (%)
+    // - weight: 총자산 중 비중 (%), cashWeight = 100 - 종목 비중 합 (합계가 정확히 100이 되도록)
+    private void putPortfolio(Map<String, Object> roundMap, long cash, long roundAsset,
+                              Map<String, Double> sharesByTicker,
+                              Map<String, StockPrice> priceByTicker,
+                              Map<String, Double> costs) {
+        List<Map<String, Object>> holdings = new ArrayList<>();
+        double weightSum = 0.0;
+
+        for (String ticker : TICKERS) {
+            double shares = sharesByTicker.getOrDefault(ticker, 0.0);
+            StockPrice price = priceByTicker.get(ticker);
+            if (shares <= 1e-9 || price == null) continue;
+
+            double currentPrice = price.getClose();
+            double cost = costs.getOrDefault(ticker, 0.0);
+            double value = shares * currentPrice;
+            double avgPrice = cost / shares;
+            double returnRate = cost > 0 ? (value - cost) / cost * 100 : 0.0;
+            double weight = roundAsset > 0 ? round2(value / roundAsset * 100) : 0.0;
+            weightSum += weight;
+
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("ticker", ticker);
+            h.put("name", TICKER_NAMES.getOrDefault(ticker, ticker));
+            h.put("shares", Math.round(shares * 10000.0) / 10000.0);
+            h.put("avgPrice", round2(avgPrice));
+            h.put("currentPrice", round2(currentPrice));
+            h.put("costAmount", Math.round(cost));
+            h.put("value", Math.round(value));
+            h.put("returnRate", round2(returnRate));
+            h.put("weight", weight);
+            holdings.add(h);
+        }
+
+        roundMap.put("holdings", holdings);
+        roundMap.put("cash", cash);
+        roundMap.put("cashWeight", round2(100.0 - weightSum));
     }
 
     private List<StockPrice> loadPriceList(GameSession session, String ticker) {
