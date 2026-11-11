@@ -6,11 +6,13 @@ import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
 import '../models/fixed_ranking.dart';
+import '../models/news_item.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
 import '../services/mock_data.dart';
 import '../widgets/stock_chart.dart';
 import '../widgets/holdings_widget.dart';
+import '../widgets/news_banner.dart';
 import 'game_result_screen.dart';
 
 enum AiState { idle, loading, done, error }
@@ -53,6 +55,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // 라운드별 AI 예측 1순위 (결과 화면에서 '내 선택'과 비교)
   final Map<int, int> _aiPicks = {};
   final Map<int, List<int>> _aiCandidates = {}; // 그때 받은 후보 카드 3장
+
+  // (11주차) 뉴스 배너 — 화면 위에 겹쳐 띄워 기존 배치를 건드리지 않음
+  List<NewsItem> _pendingSelectNews = [];   // 다음 카드 선택 라운드 뉴스 (nextRoundNews)
+  final Set<String> _shownNewsKeys = {};    // 이미 띄운 뉴스 (날짜+헤드라인)
+  final List<NewsItem> _newsLog = [];       // 지금까지 나온 뉴스 (📰 목록)
+  NewsItem? _bannerNews;
+  bool _bannerSticky = false;               // 카드 선택 라운드: 고를 때까지 유지
+  Timer? _bannerTimer;
 
   Timer? _autoTimer;
 
@@ -155,11 +165,17 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           parent: _assetAnimController,
           curve: Curves.easeOut,
         ));
+
+    // 1라운드 뉴스 (게임 시작 응답 rounds[0].news)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onRoundEntered();
+    });
   }
 
   @override
   void dispose() {
     _autoTimer?.cancel();
+    _bannerTimer?.cancel();
     _assetAnimController.dispose();
     super.dispose();
   }
@@ -305,6 +321,44 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   // =============================================
+  // 뉴스 배너 (11주차)
+  // =============================================
+  // 라운드에 들어올 때마다 호출. 그 라운드 뉴스 + (카드 선택 라운드면) nextRoundNews
+  void _onRoundEntered() {
+    final roundNews =
+        _session.getRound(_currentRoundIndex)?.news ?? const <NewsItem>[];
+    final sticky = _showCard;
+    _showNews([...roundNews, if (sticky) ..._pendingSelectNews],
+        sticky: sticky);
+  }
+
+  void _showNews(List<NewsItem> items, {required bool sticky}) {
+    final fresh = <NewsItem>[];
+    for (final n in items) {
+      if (_shownNewsKeys.add(n.key)) fresh.add(n); // 이미 띄운 뉴스는 건너뜀
+    }
+    if (fresh.isEmpty) return;
+    _bannerTimer?.cancel();
+    setState(() {
+      _newsLog.addAll(fresh);
+      _bannerNews   = fresh.first; // 같은 날 뉴스가 여러 개면 첫 번째만 배너, 나머지는 📰 목록
+      _bannerSticky = sticky;
+    });
+    if (!sticky) {
+      _bannerTimer = Timer(const Duration(seconds: 5), _hideBanner);
+    }
+  }
+
+  void _hideBanner() {
+    _bannerTimer?.cancel();
+    if (!mounted || _bannerNews == null) return;
+    setState(() {
+      _bannerNews   = null;
+      _bannerSticky = false;
+    });
+  }
+
+  // =============================================
   // 자동 진행
   // =============================================
   void _startAutoPlay() {
@@ -322,6 +376,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _triggeredCardIds = [];
             _resetAiState();
           });
+          _onRoundEntered();
         }
       } else {
         setState(() {
@@ -330,6 +385,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               _session.rounds[_currentRoundIndex].triggeredCards;
         });
         _animateAsset();
+        _onRoundEntered();
       }
     });
   }
@@ -354,6 +410,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       }
     });
     _animateAsset();
+    _onRoundEntered();
   }
 
   void _animateAsset() {
@@ -440,6 +497,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       );
       _cardSelected       = true;
       _currentCardOptions = result.nextCardOptions;
+      _pendingSelectNews  = result.nextRoundNews;
+      // 카드를 골랐으니 선택용 배너는 닫음
+      if (_bannerSticky) {
+        _bannerNews   = null;
+        _bannerSticky = false;
+      }
 
       // 선택한 카드 누적
       if (!_selectedCardIds.contains(selectedCardId)) {
@@ -464,7 +527,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _lastAddedCardId    = null;
       _triggeredCardIds   = [];
       _resetAiState();
+      _pendingSelectNews  = [];
+      _shownNewsKeys.clear();
+      _newsLog.clear();
+      _bannerNews         = null;
+      _bannerSticky       = false;
     });
+    _bannerTimer?.cancel();
   }
 
   // =============================================
@@ -475,7 +544,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     return Scaffold(
       backgroundColor: const Color(0xFFFAF9F5),
       body: SafeArea(
-        child: Column(
+        child: Stack(
+          children: [
+        Column(
           children: [
             _buildHeader(),
             // 개발용 버튼: 디버그 실행에서만 표시 (릴리스·데모 빌드에서는 숨김)
@@ -520,6 +591,32 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             ),
           ],
         ),
+            // (11주차) 뉴스 배너 — 화면 위에 겹쳐 띄워 아래 배치는 움직이지 않음
+            Positioned(
+              left: 16,
+              right: 16,
+              top: 52,
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                transitionBuilder: (child, anim) => SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, -0.3),
+                    end: Offset.zero,
+                  ).animate(anim),
+                  child: FadeTransition(opacity: anim, child: child),
+                ),
+                child: _bannerNews == null
+                    ? const SizedBox.shrink()
+                    : NewsBanner(
+                        key:     ValueKey(_bannerNews!.key),
+                        news:    _bannerNews!,
+                        sticky:  _bannerSticky,
+                        onClose: _hideBanner,
+                      ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -543,6 +640,34 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF111111))),
           ),
+          // (11주차) 지금까지 나온 뉴스 목록
+          if (_newsLog.isNotEmpty) ...[
+            GestureDetector(
+              onTap: () => showNewsLogSheet(context, _newsLog),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F3F5),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.newspaper_rounded,
+                        size: 14, color: Color(0xFF495057)),
+                    const SizedBox(width: 3),
+                    Text('${_newsLog.length}',
+                        style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF495057))),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 10, vertical: 4),

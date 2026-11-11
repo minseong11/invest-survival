@@ -1,4 +1,5 @@
 import 'holding.dart';
+import 'news_item.dart';
 import 'price_data.dart';
 
 class RoundData {
@@ -13,6 +14,7 @@ class RoundData {
   final List<Holding> holdings;   // 종목별 수익률·비중
   final double? cash;             // 현금(원)
   final double? cashWeight;       // 총자산 중 현금 비중(%)
+  final List<NewsItem> news;      // (11주차) 이 라운드 날짜의 뉴스
 
   RoundData({
     required this.round,
@@ -24,6 +26,7 @@ class RoundData {
     this.holdings = const [],
     this.cash,
     this.cashWeight,
+    this.news = const [],
   });
 
   factory RoundData.fromJson(Map<String, dynamic> json) {
@@ -50,6 +53,7 @@ class RoundData {
       cashWeight:     json['cashWeight'] != null
           ? (json['cashWeight'] as num).toDouble()
           : null,
+      news:           NewsItem.listFromJson(json['news']),
     );
   }
 

@@ -1,5 +1,15 @@
 import 'package:dio/dio.dart';
 
+// 화면에 그대로 보여줄 수 있는 오류 (toString이 메시지만 반환)
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  ApiException(this.message, {this.statusCode});
+
+  @override
+  String toString() => message;
+}
+
 class ApiClient {
   //static const String _baseUrl = 'http://172.22.165.231:8080';
   //static const String _baseUrl = 'http://172.18.16.192:8080';
@@ -56,7 +66,7 @@ class ApiClient {
     } else {
       final message =
           body is Map ? body['message'] ?? '알 수 없는 오류' : '알 수 없는 오류';
-      throw Exception('백엔드 오류: $message');
+      throw ApiException('$message');
     }
   }
 
@@ -66,17 +76,29 @@ class ApiClient {
       // ① 네트워크 오류 — 서버 꺼짐, 와이파이 없음
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.receiveTimeout:
-        return Exception('네트워크 오류: 연결 시간 초과');
+        return ApiException('서버 응답이 늦어요. 잠시 후 다시 시도해 주세요');
       case DioExceptionType.connectionError:
-        return Exception('네트워크 오류: 서버에 연결할 수 없어요');
+        return ApiException('서버에 연결할 수 없어요');
 
       // ③ HTTP 상태코드 오류 — 400, 500 등
+      //   (11주차) 서버가 잘못된 요청에 400 + {"success":false,"message":...}를 주므로 message를 그대로 표시
       case DioExceptionType.badResponse:
         final statusCode = e.response?.statusCode;
-        return Exception('HTTP 오류: $statusCode');
+        final data = e.response?.data;
+        final serverMessage =
+            data is Map && data['message'] is String ? data['message'] as String : null;
+        if (serverMessage != null && serverMessage.isNotEmpty) {
+          return ApiException(serverMessage, statusCode: statusCode);
+        }
+        return ApiException(
+          statusCode != null && statusCode >= 500
+              ? '서버에 문제가 생겼어요 ($statusCode)'
+              : '요청을 처리할 수 없어요 ($statusCode)',
+          statusCode: statusCode,
+        );
 
       default:
-        return Exception('네트워크 오류: ${e.message}');
+        return ApiException('네트워크 오류: ${e.message}');
     }
   }
 }
