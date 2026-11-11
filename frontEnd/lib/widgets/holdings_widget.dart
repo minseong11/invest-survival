@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/card_info.dart';
+import '../models/holding.dart';
 import '../models/round_data.dart';
+
+// 고른 라운드에 한 번 사는 카드 (거인의 어깨, 원유 베팅) — 발동 횟수 대신 "즉시 매수"로 표시
+const Set<int> kOnceCardIds = {1, 7};
 
 // =============================================
 // 보유 카드 데이터
@@ -12,6 +16,7 @@ class HoldingCardInfo {
   final String emoji;
   final double currentChangeRate;
   final bool isNew;
+  final int triggerCount; // 지금 라운드까지 발동한 횟수 (11주차)
 
   HoldingCardInfo({
     required this.cardId,
@@ -20,7 +25,10 @@ class HoldingCardInfo {
     required this.emoji,
     required this.currentChangeRate,
     this.isNew = false,
+    this.triggerCount = 0,
   });
+
+  bool get isOnce => kOnceCardIds.contains(cardId);
 }
 
 // 선택된 카드 목록에서 보유 카드 추출
@@ -32,6 +40,14 @@ List<HoldingCardInfo> extractHoldingCards({
   int? newCardId,
 }) {
   final holdings = <HoldingCardInfo>[];
+
+  // 지금 라운드까지 카드별 발동 횟수 (rounds[].triggeredCards 누적)
+  final counts = <int, int>{};
+  for (int i = 0; i <= currentRoundIndex && i < rounds.length; i++) {
+    for (final id in rounds[i].triggeredCards) {
+      counts[id] = (counts[id] ?? 0) + 1;
+    }
+  }
 
   for (final cardId in selectedCardIds) {
     final card = CardInfo.fromId(cardId);
@@ -50,6 +66,7 @@ List<HoldingCardInfo> extractHoldingCards({
       emoji:             card.emoji,
       currentChangeRate: changeRate,
       isNew:             cardId == newCardId,
+      triggerCount:      counts[cardId] ?? 0,
     ));
   }
 
@@ -57,22 +74,35 @@ List<HoldingCardInfo> extractHoldingCards({
 }
 
 // =============================================
-// 보유 카드 위젯 (게임 진행 중 / 카드 선택 모두 동일)
-// 2x2 공간 고정, 빈 슬롯 없음, 발동 애니메이션
+// 보유 자산 + 내 카드 위젯 (게임 진행 중 / 카드 선택 모두 동일)
+//  - 보유 자산 (11주차): 종목별 평균 매수가 대비 수익률·비중, 현금
+//    서버가 holdings를 보내지 않으면 이 칸은 생략 (예전 서버와도 호환)
+//  - 내 카드: 카드 이름 + 지금까지 발동 횟수, 이번 라운드 발동 시 애니메이션
 // =============================================
 class HoldingCardsWidget extends StatelessWidget {
   final List<HoldingCardInfo> cards;
   final List<int> triggeredCardIds; // 이번 라운드 발동한 카드
+  final List<Holding> holdings;     // 이번 라운드 보유 자산 (서버)
+  final double? cashWeight;         // 현금 비중(%)
 
   const HoldingCardsWidget({
     super.key,
     required this.cards,
     this.triggeredCardIds = const [],
+    this.holdings = const [],
+    this.cashWeight,
   });
+
+  static const _labelStyle = TextStyle(
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+    color: Color(0xFF6B7684),
+  );
 
   @override
   Widget build(BuildContext context) {
     if (cards.isEmpty) return const SizedBox.shrink();
+    final showAssets = holdings.isNotEmpty;
 
     return Container(
       width: double.infinity,
@@ -85,14 +115,19 @@ class HoldingCardsWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            '보유 카드',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF6B7684),
-            ),
-          ),
+          if (showAssets) ...[
+            const Text('보유 자산', style: _labelStyle),
+            const SizedBox(height: 6),
+            ...holdings.map((h) => _AssetRow(
+                  name:       h.name,
+                  returnRate: h.returnRate,
+                  weight:     h.weight,
+                )),
+            if (cashWeight != null)
+              _AssetRow(name: '현금', returnRate: null, weight: cashWeight!),
+            const SizedBox(height: 10),
+          ],
+          const Text('내 카드', style: _labelStyle),
           const SizedBox(height: 8),
           // 2x2 공간 고정: GridView 대신 직접 레이아웃
           _buildGrid(),
@@ -139,6 +174,74 @@ class HoldingCardsWidget extends StatelessWidget {
     }
 
     return Column(children: rows);
+  }
+}
+
+// =============================================
+// 보유 자산 한 줄: 이름 | 수익률 | 비중 막대 | 비중%
+// =============================================
+class _AssetRow extends StatelessWidget {
+  final String name;
+  final double? returnRate; // 현금은 null
+  final double weight;
+
+  const _AssetRow({
+    required this.name,
+    required this.returnRate,
+    required this.weight,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final r = returnRate;
+    final rateColor = r == null
+        ? const Color(0xFF6B7684)
+        : (r >= 0 ? const Color(0xFFE03131) : const Color(0xFF1971C2));
+    final w = weight.clamp(0, 100).toDouble();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 56,
+            child: Text(name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF111111))),
+          ),
+          SizedBox(
+            width: 54,
+            child: Text(
+              r == null ? '' : '${r >= 0 ? '+' : ''}${r.toStringAsFixed(1)}%',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                  fontSize: 11, fontWeight: FontWeight.w600, color: rateColor),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: w / 100,
+                minHeight: 6,
+                backgroundColor: const Color(0xFFF1F3F5),
+                valueColor: const AlwaysStoppedAnimation(Color(0xFF3D348B)),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 38,
+            child: Text('${w.toStringAsFixed(0)}%',
+                textAlign: TextAlign.right,
+                style: const TextStyle(fontSize: 10, color: Color(0xFF6B7684))),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -218,8 +321,10 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
 
   @override
   Widget build(BuildContext context) {
-    final isPos  = widget.card.currentChangeRate >= 0;
-    final color  = isPos ? const Color(0xFFE03131) : const Color(0xFF1971C2);
+    // 11주차: 종목 코드·오늘 등락률 대신 카드 이름과 발동 횟수 표시
+    final label = widget.card.isOnce
+        ? '즉시 매수'
+        : '발동 ${widget.card.triggerCount}회';
 
     return AnimatedBuilder(
       animation: _controller,
@@ -253,7 +358,7 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.card.ticker.replaceAll('^', ''),
+                  widget.card.cardName,
                   style: const TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w600,
@@ -265,11 +370,11 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
             ),
           ),
           Text(
-            '${isPos ? '+' : ''}${widget.card.currentChangeRate.toStringAsFixed(1)}%',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: color,
+            label,
+            style: const TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w500,
+              color: Color(0xFF6B7684),
             ),
           ),
         ],
