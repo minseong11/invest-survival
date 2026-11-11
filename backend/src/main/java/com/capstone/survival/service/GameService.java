@@ -2,10 +2,12 @@ package com.capstone.survival.service;
 
 import com.capstone.survival.entity.Card;
 import com.capstone.survival.entity.GameSession;
+import com.capstone.survival.entity.NewsEvent;
 import com.capstone.survival.entity.Scenario;
 import com.capstone.survival.entity.StockPrice;
 import com.capstone.survival.repository.CardRepository;
 import com.capstone.survival.repository.GameSessionRepository;
+import com.capstone.survival.repository.NewsEventRepository;
 import com.capstone.survival.repository.ScenarioRepository;
 import com.capstone.survival.repository.StockPriceRepository;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +28,7 @@ public class GameService {
     private final ScenarioRepository scenarioRepository;
     private final StockPriceRepository stockPriceRepository;
     private final CardRepository cardRepository;
+    private final NewsEventRepository newsEventRepository;
     private final RestTemplate restTemplate;
 
     @Value("${ai.server.url:http://localhost:8000}")
@@ -98,6 +101,7 @@ public class GameService {
         firstRound.put("holdings", new ArrayList<>());   // 시작 시 보유 종목 없음
         firstRound.put("cash", INITIAL_ASSET);
         firstRound.put("cashWeight", 100.0);
+        firstRound.put("news", newsByRound(session.getScenarioId(), spxList).getOrDefault(1, new ArrayList<>()));
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("sessionId", sessionId);
@@ -541,6 +545,12 @@ public class GameService {
         response.put("selectedCard", card.getName());
         response.put("nextEventRound", nextEventRound);
         response.put("nextCardOptions", nextCardOptions);
+        // (11주차) 다음 카드 선택 라운드(25·50·75R)의 뉴스 — 카드 선택 화면 배너용
+        //   같은 뉴스가 다음 응답의 rounds[].news에도 다시 옴 (앱에서 날짜+헤드라인으로 중복 제거)
+        response.put("nextRoundNews", nextEventRound != null
+                ? newsByRound(session.getScenarioId(), loadPriceList(session, "^SPX"))
+                  .getOrDefault(nextEventRound, new ArrayList<>())
+                : new ArrayList<>());
         response.put("rounds", rounds);
 
         return response;
@@ -810,6 +820,7 @@ public class GameService {
 
         Map<Integer, Integer> triggerMap = parseTriggerCount(triggerCountStr);
         List<Map<String, Object>> rounds = new ArrayList<>();
+        Map<Integer, List<Map<String, Object>>> newsMap = newsByRound(session.getScenarioId(), spxList);
 
         for (int i = startRound - 1; i < endRound; i++) {
             if (i >= spxList.size()) break;
@@ -974,6 +985,7 @@ public class GameService {
             pricesNow.put("XAUUSD", xauusdCurrent); pricesNow.put("USO", usoCurrent);
             pricesNow.put("AAPL", aaplCurrent);   pricesNow.put("TLT", tltCurrent);
             putPortfolio(roundMap, cash, roundAsset, sharesNow, pricesNow, costs);
+            roundMap.put("news", newsMap.getOrDefault(roundNumber, new ArrayList<>()));
             rounds.add(roundMap);
         }
 
@@ -1033,6 +1045,41 @@ public class GameService {
             case "TLT"    -> tlt    != null ? tlt.getClose()    : 0;
             default -> 0;
         };
+    }
+
+    // =============================================
+    // 뉴스 이벤트 (11주차)
+    // =============================================
+    // 라운드 번호 → 그 라운드에 표시할 뉴스 목록
+    // - 뉴스 날짜가 거래일이 아니면 그 다음 S&P500 거래일 라운드
+    // - 게임 시작일 이전·100라운드 이후 뉴스는 제외 (검증용 실행처럼 다른 시작일이면 자연히 빠짐)
+    private Map<Integer, List<Map<String, Object>>> newsByRound(Integer scenarioId, List<StockPrice> spxList) {
+        Map<Integer, List<Map<String, Object>>> map = new HashMap<>();
+        if (scenarioId == null || spxList.isEmpty()) return map;
+
+        int limit = Math.min(100, spxList.size());
+        LocalDate firstDate = spxList.get(0).getTradeDate();
+
+        for (NewsEvent e : newsEventRepository.findByScenarioIdOrderByEventDate(scenarioId)) {
+            if (e.getEventDate().isBefore(firstDate)) continue;
+            int round = -1;
+            for (int i = 0; i < limit; i++) {
+                if (!spxList.get(i).getTradeDate().isBefore(e.getEventDate())) {
+                    round = i + 1;
+                    break;
+                }
+            }
+            if (round < 0) continue;   // 100라운드 이후
+
+            Map<String, Object> n = new LinkedHashMap<>();
+            n.put("date", e.getEventDate().toString());
+            n.put("headline", e.getHeadline());
+            n.put("level", e.getLevel());
+            n.put("source", e.getSource());
+            n.put("sourceUrl", e.getSourceUrl());
+            map.computeIfAbsent(round, k -> new ArrayList<>()).add(n);
+        }
+        return map;
     }
 
     // =============================================

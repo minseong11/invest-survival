@@ -1,9 +1,11 @@
 package com.capstone.survival.service;
 
 import com.capstone.survival.entity.Card;
+import com.capstone.survival.entity.NewsEvent;
 import com.capstone.survival.entity.Scenario;
 import com.capstone.survival.entity.StockPrice;
 import com.capstone.survival.repository.CardRepository;
+import com.capstone.survival.repository.NewsEventRepository;
 import com.capstone.survival.repository.ScenarioRepository;
 import com.capstone.survival.repository.StockPriceRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +26,7 @@ import java.util.*;
  *   3) 카드 종목: 시작일 이전 데이터가 없으면 상장 전 → 카드 제외 (로그만)
  *               상장된 종목은 100라운드 각 날짜마다 직전 가격이 MAX_GAP_DAYS일 이내인지
  *               (게임은 빈 날짜에 직전 가격을 쓰므로, 오래 비어 있으면 가격이 멈춘 것처럼 계산됨)
+ *   4) (11주차) 뉴스: 날짜가 1R~100R 안인지, level이 danger/caution/positive인지, 헤드라인·출처가 있는지
  * 하나라도 실패하면 원인을 모아 IllegalStateException → 서버 기동 중단
  */
 @Slf4j
@@ -34,10 +37,12 @@ public class ScenarioDataChecker {
     private static final int GAME_ROUNDS = 100;
     private static final int MAX_GAP_DAYS = 7;              // 주말+연휴를 넘는 공백이면 빈 구간으로 판단
     private static final int WINDOW_CALENDAR_DAYS = 200;    // 100거래일 ≈ 145일 → 여유 있게 200일만 조회
+    private static final Set<String> NEWS_LEVELS = Set.of("danger", "caution", "positive");
 
     private final ScenarioRepository scenarioRepository;
     private final CardRepository cardRepository;
     private final StockPriceRepository stockPriceRepository;
+    private final NewsEventRepository newsEventRepository;
 
     public void checkAll() {
         List<Scenario> scenarios = scenarioRepository.findAll(Sort.by("id"));
@@ -131,10 +136,44 @@ public class ScenarioDataChecker {
             }
         }
 
+        // 4) 뉴스
+        failures.addAll(checkNews(scenario, label, roundDates));
+
         long usableCards = cards.stream().filter(c -> !unlisted.contains(c.getTicker())).count();
         log.info("[시나리오 검사] {}: 1R {} ~ 100R {}, 사용 가능 카드 {}/{}장, 상장 전 제외 종목 {}",
                 label, firstDate, lastDate, usableCards, cards.size(),
                 unlisted.isEmpty() ? "없음" : unlisted);
         return failures;
+    }
+
+    private List<String> checkNews(Scenario scenario, String label, List<LocalDate> roundDates) {
+        List<String> failures = new ArrayList<>();
+        LocalDate firstDate = roundDates.get(0);
+        LocalDate lastDate = roundDates.get(roundDates.size() - 1);
+
+        List<String> placed = new ArrayList<>();
+        for (NewsEvent e : newsEventRepository.findByScenarioIdOrderByEventDate(scenario.getId())) {
+            String id = "뉴스 " + e.getId() + "(" + e.getEventDate() + ")";
+            if (!NEWS_LEVELS.contains(e.getLevel())) {
+                failures.add(String.format("%s / %s: level '%s'은 danger·caution·positive 중 하나여야 함", label, id, e.getLevel()));
+            }
+            if (isBlank(e.getHeadline()) || isBlank(e.getSource()) || isBlank(e.getSourceUrl())) {
+                failures.add(String.format("%s / %s: 헤드라인·출처 이름·출처 URL 중 빈 값이 있음", label, id));
+            }
+            if (e.getEventDate().isBefore(firstDate) || e.getEventDate().isAfter(lastDate)) {
+                failures.add(String.format("%s / %s: 게임 기간(1R %s ~ 100R %s) 밖의 날짜", label, id, firstDate, lastDate));
+                continue;
+            }
+            // 그날 또는 다음 거래일 라운드
+            int round = 1;
+            while (roundDates.get(round - 1).isBefore(e.getEventDate())) round++;
+            placed.add(round + "R");
+        }
+        log.info("[시나리오 검사] {}: 뉴스 {}개 → {}", label, placed.size(), placed.isEmpty() ? "없음" : String.join(", ", placed));
+        return failures;
+    }
+
+    private boolean isBlank(String s) {
+        return s == null || s.isBlank();
     }
 }
