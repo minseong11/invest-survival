@@ -119,6 +119,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     return _v2RecommendedCardId;
   }
 
+  // 지금 보고 있는 라운드 데이터 (보유 자산 표시용)
+  RoundData? get _currentRoundData =>
+      _currentRoundIndex < _session.rounds.length
+          ? _session.rounds[_currentRoundIndex]
+          : null;
+
   // 보유카드 데이터
   List<HoldingCardInfo> get _holdingCards => extractHoldingCards(
         selectedCardIds:   _selectedCardIds,
@@ -495,8 +501,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     // 보유카드 (항상 동일한 위젯)
                     if (_selectedCardIds.isNotEmpty) ...[
                       HoldingCardsWidget(
-                        cards:           _holdingCards,
+                        cards:            _holdingCards,
                         triggeredCardIds: _triggeredCardIds,
+                        holdings:         _currentRoundData?.holdings ?? const [],
+                        cashWeight:       _currentRoundData?.cashWeight,
                       ),
                       const SizedBox(height: 8),
                     ],
