@@ -41,6 +41,11 @@ public class GameSession {
     private String triggerCount;
     // ↑ 카드별 발동 횟수 저장 "6:2" → 카드6번이 2회 발동됨
 
+    @Column(name = "offered_cards")
+    private String offeredCards;
+    // ↑ (11주차) 라운드별로 제시한 카드 후보 "1:3,4,10|25:7,8,2|50:...|75:..."
+    //   카드 선택 검증과 사후 분석("받은 후보 안에서의 최선")에 사용
+
     public GameSession(String sessionId, Integer scenarioId,
                        String scenarioTitle, String ticker,
                        String gameStartDate) {
@@ -63,6 +68,12 @@ public class GameSession {
         this.currentRound = 1;
         this.appliedCards = "";
         this.triggerCount = "";
+        this.offeredCards = "";
+    }
+
+    // 라운드별 제시 후보 갱신 (직렬화는 GameService에서)
+    public void updateOfferedCards(String offeredCards) {
+        this.offeredCards = offeredCards;
     }
 
     // 상태 업데이트 메서드 추가

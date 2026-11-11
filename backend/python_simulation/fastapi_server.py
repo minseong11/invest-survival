@@ -7,6 +7,7 @@ FastAPI AI 추천 서버
   POST /ai/v2/recommend — V2 실시간 추천 (25·50라운드)
   POST /ai/v2/feedback  — V2 LLM 자연어 피드백 (25·50라운드, v5.0 신규)
   POST /ai/analysis/backtest — 사후 분석: 전체 조합 백테스팅 (v6.0 신규, 사용 가능 카드 기준)
+                               + 받은 후보 안 최선 조합·라운드별 대안 (11주차, offeredCards)
 
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
@@ -174,6 +175,7 @@ class BacktestRequest(BaseModel):
     startDate: str                          # 게임 시작일 (예: "2008-09-02")
     playerCardSelections: Dict[str, int]    # {"1": 1, "25": 4, "50": 5, "75": 9}
     topN: int = 3
+    offeredCards: Optional[Dict[str, List[int]]] = None   # (11주차) {"1": [1,3,10], "25": [...], ...} 라운드별 제시 후보
 
 class BacktestCombo(BaseModel):
     rank: int
@@ -190,11 +192,31 @@ class BacktestPlayerResult(BaseModel):
     tiedCount: int                          # 내 조합 포함, 같은 결과를 내는 조합 수
     topPercent: float                       # rank/total × 100 (상위 몇 %, 작을수록 좋음)
 
+# (11주차) 받은 후보 안 분석
+class OfferedAlternative(BaseModel):
+    cardId: int
+    finalAsset: int
+    finalReturnRate: float
+    diffReturnRate: float                   # 대안 - 내 결과 (%p, +면 대안이 더 좋았음)
+
+class OfferedRoundAlternatives(BaseModel):
+    round: int
+    offeredCards: List[int]                 # 이 라운드에 제시된 후보
+    playerCardId: int                       # 내가 고른 카드
+    alternatives: List[OfferedAlternative]  # 이 라운드만 다른 후보로 바꿨을 때 (나머지 선택은 그대로)
+
+class OfferedAnalysis(BaseModel):
+    totalCombinations: int                  # 받은 후보로 만들 수 있는 조합 수 (최대 81)
+    bestCombo: BacktestCombo
+    playerResult: BacktestPlayerResult
+    roundAlternatives: List[OfferedRoundAlternatives]
+
 class BacktestResponse(BaseModel):
     totalCombinations: int
     cardPoolSize: int                       # 시작일에 사용 가능한 카드 수 (상장 전 종목 카드 제외)
     topCombos: List[BacktestCombo]
     playerResult: BacktestPlayerResult
+    offeredAnalysis: Optional[OfferedAnalysis] = None   # (11주차) 후보 정보가 없으면 null
 
 
 # =============================================
@@ -587,12 +609,14 @@ def analysis_backtest(req: BacktestRequest):
     사후 분석 (v6.0 신규)
     같은 시작일에서 사용 가능한 카드로 만든 4장 전체 순열을 실제 게임 로직으로 시뮬레이션하고,
     플레이어 조합의 최종 자산 순위/백분위를 반환한다.
+    (11주차) offeredCards를 주면 "받은 후보 안 최선 조합"과 라운드별 대안(offeredAnalysis)도 반환한다.
     def(동기)로 선언해 FastAPI가 별도 스레드에서 실행 → 계산 중에도 다른 요청이 막히지 않음.
     """
     if not 1 <= req.topN <= 20:
         raise HTTPException(status_code=400, detail='topN은 1~20 사이여야 합니다')
     try:
-        return run_backtest(req.startDate, req.playerCardSelections, req.topN)
+        return run_backtest(req.startDate, req.playerCardSelections, req.topN,
+                            offered_cards=req.offeredCards)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
