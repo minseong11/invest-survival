@@ -1,0 +1,120 @@
+# 자동 검사 (#125)
+#
+# 실제 주가 CSV·모델 파일·API 키는 저장소에 없으므로, 테스트용 가상의 주가(make_fixture_data.py)로 검사한다.
+# 계산이 맞는지·응답 형식이 맞는지·화면이 깨지지 않는지는 가격이 가상이어도 똑같이 확인된다.
+#   python  : pytest (게임 엔진, 사후 분석, AI 서버 엔드포인트, LLM 출력 검사, 카드 규칙 일치)
+#   flutter : 정적 분석 + 화면 흐름 테스트
+#   backend : PostgreSQL을 띄우고 게임 서버 테스트·빌드 → 서버 2개를 실제로 실행해
+#             Java↔Python 계산 일치(원 단위)와 실제 게임 흐름을 확인
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python 테스트
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend/python_simulation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/python_simulation/requirements-test.txt
+      - run: pip install -r requirements-test.txt
+      - run: pytest -q
+
+  flutter:
+    name: Flutter 분석·테스트
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontEnd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      # 경고·오류가 있으면 실패. 참고(info) 수준은 Flutter 버전에 따라 달라져 실패로 보지 않는다
+      - run: flutter analyze --no-fatal-infos
+      - run: flutter test
+
+  backend:
+    name: 게임 서버 테스트 + Java↔Python 일치
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: '1234'
+          POSTGRES_DB: survivor_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/python_simulation/requirements-test.txt
+      - run: pip install -r backend/python_simulation/requirements-test.txt
+
+      - name: 테스트용 가상의 주가 만들기 (실제 주가 아님)
+        run: python backend/python_simulation/tests/make_fixture_data.py backend/data
+
+      - name: 게임 서버 테스트·빌드
+        working-directory: backend
+        run: ./gradlew test bootJar --no-daemon
+
+      - name: 게임 서버(8080)·AI 서버(8000) 실행
+        run: |
+          cd backend
+          nohup java -jar build/libs/invest-survival-0.0.1-SNAPSHOT.jar > "$GITHUB_WORKSPACE/spring.log" 2>&1 &
+          cd python_simulation
+          nohup python fastapi_server.py > "$GITHUB_WORKSPACE/fastapi.log" 2>&1 &
+          for i in $(seq 1 90); do
+            if grep -q "시나리오 3개 모두 통과" "$GITHUB_WORKSPACE/spring.log" 2>/dev/null \
+               && curl -sf localhost:8080/game/scenarios > /dev/null \
+               && curl -sf localhost:8000/ > /dev/null; then
+              echo "서버 준비 완료"; exit 0
+            fi
+            sleep 2
+          done
+          echo "서버가 시간 안에 준비되지 않았습니다"; exit 1
+
+      - name: Java↔Python 계산 일치 확인 (차이가 1원이라도 있으면 실패)
+        working-directory: backend/python_simulation
+        run: python compare_java_python.py --n 150 --strict --no-report
+
+      - name: 실제 게임 흐름 확인 (시작 → 카드·위기 대응 → 사후 분석)
+        working-directory: backend/python_simulation
+        run: python e2e_game_flow.py --games 2
+
+      - name: 서버 로그 (실패했을 때)
+        if: failure()
+        run: |
+          echo "===== spring.log ====="; tail -n 150 "$GITHUB_WORKSPACE/spring.log" || true
+          echo "===== fastapi.log ====="; tail -n 80 "$GITHUB_WORKSPACE/fastapi.log" || true

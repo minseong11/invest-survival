@@ -250,6 +250,9 @@ def write_report(results, alignment, n, seed, ok_all):
     lines = ['# Python·Java 게임 계산 일치 확인', '',
              f'- 생성 시각: {datetime.now().isoformat(timespec="seconds")}',
              f'- 주가 데이터: {data_label()}',
+             *(['- ※ 가상의 주가로 계산한 결과다. 실제 주가 CSV를 backend/data에 넣고 '
+                '`python3 compare_java_python.py`를 다시 실행하면 이 보고서가 실제 데이터 기준으로 갱신된다']
+               if '대체 데이터' in data_label() else []),
              f'- 시나리오당 조합 수: {n} (시드 {seed}), 그중 절반은 무작위 위기 대응(버틴다/절반 판다/더 산다) 1~3개 포함',
              '- Python: game_logic.run_game() / Java: POST /game/validate',
              '- 두 계산은 같은 연산 순서·버림(현금은 원 단위 정수, 매매 금액 소수점 아래 버림)을 쓴다 (#125)',
