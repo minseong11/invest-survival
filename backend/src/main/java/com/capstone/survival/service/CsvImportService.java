@@ -16,6 +16,7 @@ import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -116,6 +117,10 @@ public class CsvImportService {
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd");
         int saved = 0;
 
+        // (#125) 이미 저장된 날짜를 한 번에 읽어 둔다
+        //   (기존에는 CSV 한 줄마다 DB를 조회해, 종목당 약 8천 번씩 조회했다 → 첫 실행이 느린 원인)
+        Set<LocalDate> existing = new HashSet<>(stockPriceRepository.findTradeDatesByTicker(ticker));
+
         try (BufferedReader br = Files.newBufferedReader(csvPath, StandardCharsets.UTF_8)) {
             String line;
             boolean isHeader = true;
@@ -131,8 +136,8 @@ public class CsvImportService {
 
                 LocalDate date = LocalDate.parse(cols[0].trim(), fmt);
 
-                // 중복 데이터 스킵
-                if (stockPriceRepository.existsByTickerAndTradeDate(ticker, date)) continue;
+                // 중복 데이터 스킵 (DB에 이미 있거나, CSV 안에서 같은 날짜가 다시 나온 경우)
+                if (!existing.add(date)) continue;
 
                 Double open   = parseDouble(cols[1]);
                 Double high   = parseDouble(cols[2]);

@@ -2,9 +2,11 @@
 compare_java_python.py — Python(run_game)과 Java(/game/validate) 최종 자산 차이 측정
 
 같은 카드 조합을 Python game_logic.run_game()과 Java POST /game/validate로 각각 실행해
-최종 자산이 얼마나 다른지 측정한다.
-  - Python: float로 계산 (backtest.py 사후 분석 순위의 기준)
-  - Java  : 매수/매도마다 long으로 버림 (실제 게임 결과의 기준)
+최종 자산과 라운드별 자산이 같은지 확인한다.
+  - Python: 사후 분석 순위·학습 데이터의 기준 (backtest.py, monte_carlo_v2.py)
+  - Java  : 실제 게임 결과의 기준
+(#125) Python이 Java와 같은 연산 순서·버림으로 계산하므로 기대값은 "모든 조합에서 차이 0원"이다.
+       조합의 절반에는 무작위 위기 대응(버틴다/절반 판다/더 산다)을 넣어 그 계산도 함께 비교한다.
 
 추가로, 종목 가격이 SPX 거래일 기준으로 제대로 정렬되었는지도 점검한다.
 (그날 거래가 없으면 직전 거래일 가격, 상장 전이면 가격 없음)
@@ -13,39 +15,62 @@ compare_java_python.py — Python(run_game)과 Java(/game/validate) 최종 자�
     cd backend/python_simulation
     python3 compare_java_python.py              # 시나리오당 500개
     python3 compare_java_python.py --n 7920     # 전수 (오래 걸림)
+    python3 compare_java_python.py --strict     # 차이가 하나라도 있으면 종료 코드 1 (CI용)
+    python3 compare_java_python.py --no-report  # compare_report.md를 쓰지 않음
 
 사전 조건: Spring Boot(8080) 실행 중. FastAPI는 필요 없음.
 """
 import argparse
+import os
 import random
+import sys
 import time
 from datetime import datetime
 from itertools import permutations
 
 import requests
 
-from data_loader import get_price_list
-from game_logic import run_game, load_price_data, available_card_ids, CARDS, CARD_SELECT_ROUNDS, TICKERS
+import data_loader
+from game_logic import (run_game, load_price_data, available_card_ids,
+                        CARDS, CARD_SELECT_ROUNDS, TICKERS, DECISION_CHOICES, GAME_ROUNDS)
 
-JAVA_URL = 'http://localhost:8080/game/validate'
+JAVA_URL = os.environ.get('JAVA_URL', 'http://localhost:8080') + '/game/validate'
 
-# data.sql 시나리오 시작일 (Java/Python 모두 이 날짜 이후 첫 거래일부터 시작)
+# data.sql 시나리오 (시작일, '더 산다'에서 사는 기준 지수). Java/Python 모두 시작일 이후 첫 거래일부터 시작
 SCENARIOS = [
-    ('리먼', '2008-09-01'),
-    ('닷컴', '2000-03-01'),
-    ('코로나', '2020-02-19'),
+    ('리먼', '2008-09-01', '^SPX'),
+    ('닷컴', '2000-03-01', '^NDX'),
+    ('코로나', '2020-02-19', '^SPX'),
 ]
 
-# 판단 기준 (이슈에 적은 제안값)
-MAX_REL_DIFF_PCT = 0.01   # 최대 상대 차이 0.01% 미만
+# 판단 기준 (#125): 모든 조합·모든 라운드에서 차이 0원
 REPORT_PATH = 'compare_report.md'
 
+# 위기 대응을 넣을 수 있는 라운드 (2~99 중 카드 선택 라운드 제외)
+DECISION_ROUND_POOL = [r for r in range(2, GAME_ROUNDS) if r not in CARD_SELECT_ROUNDS]
 
-def call_java(start_date, selection):
+
+def random_decisions(rng):
+    """무작위 위기 대응 1~3개 {라운드: 선택}"""
+    rounds = rng.sample(DECISION_ROUND_POOL, rng.randint(1, 3))
+    return {r: rng.choice(DECISION_CHOICES) for r in sorted(rounds)}
+
+
+def data_label():
+    """비교에 쓴 주가 데이터가 무엇인지 (리포트에 남김)"""
+    marker = os.path.join(data_loader.DATA_DIR, 'FIXTURE_DATA.txt')
+    if os.path.exists(marker):
+        return '테스트용 대체 데이터 (tests/make_fixture_data.py로 만든 가상의 주가 — 실제 주가 아님)'
+    return os.environ.get('SURVIVAL_DATA_LABEL', '실제 주가 CSV (backend/data)')
+
+
+def call_java(start_date, selection, decisions=None, base_ticker='^SPX'):
     """Java /game/validate 호출 → (최종 자산, 라운드별 자산 리스트)"""
     body = {
         'startDate': start_date,
         'cardSelections': {str(r): c for r, c in selection.items()},
+        'decisions': {str(r): c for r, c in (decisions or {}).items()},
+        'baseTicker': base_ticker,
     }
     resp = requests.post(JAVA_URL, json=body, timeout=30)
     resp.raise_for_status()
@@ -54,8 +79,10 @@ def call_java(start_date, selection):
     return int(data['final_asset']), rounds
 
 
-def first_diverging_round(py_rounds, java_rounds, tol=1):
-    """라운드별 자산이 처음으로 tol원 넘게 달라지는 라운드 (없으면 None)"""
+def first_diverging_round(py_rounds, java_rounds, tol=0):
+    """라운드별 자산이 처음으로 tol원 넘게 달라지는 라운드 (없으면 None). 길이가 다르면 짧은 쪽 다음 라운드"""
+    if len(py_rounds) != len(java_rounds):
+        return min(len(py_rounds), len(java_rounds)) + 1
     for i, (p, j) in enumerate(zip(py_rounds, java_rounds)):
         if abs(p - j) > tol:
             return i + 1
@@ -122,7 +149,8 @@ def check_date_alignment(start_date):
     return spx_dates[0] if spx_dates else '-', rows
 
 
-def run(n, seed):
+def run(n, seed, write=True):
+    """반환: 모든 시나리오에서 차이·오류가 없으면 True"""
     all_combos = list(permutations(sorted(CARDS.keys()), 4))
     rng = random.Random(seed)
     results = {}       # 시나리오 이름 → 집계
@@ -133,9 +161,9 @@ def run(n, seed):
         call_java(SCENARIOS[0][1], dict(zip(CARD_SELECT_ROUNDS, all_combos[0])))
     except Exception as e:
         print(f'Java 서버 호출 실패: {e}\nSpring Boot(8080)가 켜져 있는지 확인하세요.')
-        return
+        return False
 
-    for name, start_date in SCENARIOS:
+    for name, start_date, base_ticker in SCENARIOS:
         print(f'\n=== {name} ({start_date}) ===')
         alignment[name] = check_date_alignment(start_date)
 
@@ -145,16 +173,20 @@ def run(n, seed):
         combos = scenario_combos if n >= len(scenario_combos) else rng.sample(scenario_combos, n)
         print(f'  사용 가능 카드 {len(pool)}장, 조합 {len(scenario_combos)}개 중 {len(combos)}개 비교')
 
-        rows = []   # (combo, py_asset, java_asset, diff, rel_pct, first_div_round)
+        rows = []   # (combo, py_asset, java_asset, diff, rel_pct, first_div_round, decisions)
         errors = 0
+        with_decisions = 0
         t0 = time.time()
         for k, combo in enumerate(combos, 1):
             sel = dict(zip(CARD_SELECT_ROUNDS, combo))
-            py = run_game(start_date, sel, price_data=price_data)
+            # 절반은 카드만, 절반은 무작위 위기 대응 포함
+            decisions = random_decisions(rng) if k % 2 == 0 else {}
+            with_decisions += bool(decisions)
+            py = run_game(start_date, sel, price_data=price_data, decisions=decisions, base_ticker=base_ticker)
             py_asset = int(py['final_asset'])
             py_rounds = [int(r['roundAsset']) for r in py['rounds']]
             try:
-                java_asset, java_rounds = call_java(start_date, sel)
+                java_asset, java_rounds = call_java(start_date, sel, decisions, base_ticker)
             except Exception as e:
                 errors += 1
                 if errors <= 3:
@@ -163,7 +195,7 @@ def run(n, seed):
             diff = java_asset - py_asset
             rel = diff / py_asset * 100 if py_asset else 0.0
             rows.append((combo, py_asset, java_asset, diff, rel,
-                         first_diverging_round(py_rounds, java_rounds)))
+                         first_diverging_round(py_rounds, java_rounds), decisions))
             if k % 50 == 0:
                 print(f'  {k}/{len(combos)} ({time.time() - t0:.0f}초)')
 
@@ -179,6 +211,8 @@ def run(n, seed):
         results[name] = {
             'start_date': start_date,
             'n': len(rows),
+            'with_decisions': with_decisions,
+            'round_mismatch': sum(1 for r in rows if r[5] is not None),   # 라운드별 자산이 한 번이라도 다른 조합 수
             'errors': errors,
             'zero_ratio': sum(1 for d in abs_diffs if d == 0) / len(rows) * 100,
             'mean_abs': sum(abs_diffs) / len(rows),
@@ -193,46 +227,63 @@ def run(n, seed):
         }
         s = results[name]
         print(f'  완료: 평균 |차이| {s["mean_abs"]:.1f}원, 최대 {s["max_abs"]:,}원 '
-              f'({s["max_rel"]:.5f}%), 순위 역전 {inverted}쌍 / 동률 불일치 {tie_mismatch}쌍')
+              f'({s["max_rel"]:.5f}%), 라운드별 불일치 {s["round_mismatch"]}개, '
+              f'순위 역전 {inverted}쌍 / 동률 불일치 {tie_mismatch}쌍')
 
-    write_report(results, alignment, n, seed)
+    ok_all = all_passed(results)
+    print(f'\n판단: {"통과 — 모든 조합에서 차이 0원" if ok_all else "실패 — 차이가 있는 조합이 있음"}')
+    if write:
+        write_report(results, alignment, n, seed, ok_all)
+    return ok_all
 
 
-def write_report(results, alignment, n, seed):
-    lines = ['# Python·Java 게임 계산 최종 자산 차이 측정', '',
+def scenario_passed(s) -> bool:
+    return (s is not None and s['max_abs'] == 0 and s['round_mismatch'] == 0
+            and s['inverted'] == 0 and s['tie_mismatch'] == 0 and s['errors'] == 0)
+
+
+def all_passed(results) -> bool:
+    return bool(results) and all(scenario_passed(s) for s in results.values())
+
+
+def write_report(results, alignment, n, seed, ok_all):
+    lines = ['# Python·Java 게임 계산 일치 확인', '',
              f'- 생성 시각: {datetime.now().isoformat(timespec="seconds")}',
-             f'- 시나리오당 조합 수: {n} (시드 {seed})',
-             '- Python: game_logic.run_game() (float) / Java: POST /game/validate (매수·매도마다 long 버림)',
+             f'- 주가 데이터: {data_label()}',
+             f'- 시나리오당 조합 수: {n} (시드 {seed}), 그중 절반은 무작위 위기 대응(버틴다/절반 판다/더 산다) 1~3개 포함',
+             '- Python: game_logic.run_game() / Java: POST /game/validate',
+             '- 두 계산은 같은 연산 순서·버림(현금은 원 단위 정수, 매매 금액 소수점 아래 버림)을 쓴다 (#125)',
              '- 차이 = Java 최종 자산 − Python 최종 자산', '']
 
     lines += ['## 1. 요약', '',
-              '| 시나리오 | 조합 수 | 차이 0 비율 | 평균 절대 차이 | 최대 절대 차이 | 최대 상대 차이 | Java가 더 낮은 비율 | 순위 역전 쌍 | 동률 불일치 쌍 |',
-              '|---|---|---|---|---|---|---|---|---|']
-    ok_all = True
+              '| 시나리오 | 조합 수 (위기 대응 포함) | 차이 0 비율 | 최대 절대 차이 | 라운드별 자산이 다른 조합 | 순위 역전 쌍 | 동률 불일치 쌍 | Java 호출 오류 |',
+              '|---|---|---|---|---|---|---|---|']
     for name, s in results.items():
         if s is None:
-            lines.append(f'| {name} | 실패 | | | | | | | |')
-            ok_all = False
+            lines.append(f'| {name} | 실패 | | | | | | |')
             continue
         lines.append(
-            f'| {name} ({s["start_date"]}) | {s["n"]} | {s["zero_ratio"]:.1f}% | {s["mean_abs"]:.1f}원 | '
-            f'{s["max_abs"]:,}원 | {s["max_rel"]:.5f}% | {s["java_lower_ratio"]:.1f}% | '
-            f'{s["inverted"]:,} / {s["total_pairs"]:,} | {s["tie_mismatch"]:,} |')
-        if s['max_rel'] >= MAX_REL_DIFF_PCT or s['inverted'] > 0 or s['errors'] > 0:
-            ok_all = False
-    lines += ['', f'**판단 기준**: 최대 상대 차이 {MAX_REL_DIFF_PCT}% 미만, 순위 역전 0쌍, Java 호출 오류 0건',
-              f'**판단**: {"무시 가능 — 보고서에 수치만 기록" if ok_all else "기준 초과 — 아래 상세 확인 후 원인 분석 필요"}', '']
+            f'| {name} ({s["start_date"]}) | {s["n"]} ({s["with_decisions"]}) | {s["zero_ratio"]:.1f}% | '
+            f'{s["max_abs"]:,}원 | {s["round_mismatch"]} | '
+            f'{s["inverted"]:,} / {s["total_pairs"]:,} | {s["tie_mismatch"]:,} | {s["errors"]} |')
+    lines += ['', '**판단 기준**: 모든 조합에서 최종 자산 차이 0원, 100라운드 모든 라운드의 자산 일치, 순위 역전·동률 불일치 0쌍, Java 호출 오류 0건',
+              f'**판단**: {"통과 — 두 계산이 원 단위까지 같음" if ok_all else "실패 — 아래 상세 확인 후 원인 분석 필요"}', '']
 
-    lines += ['## 2. 차이가 큰 조합 (시나리오별 상위 5개)', '']
+    lines += ['## 2. 차이가 있는 조합 (시나리오별 최대 5개)', '']
     for name, s in results.items():
         if s is None:
             continue
-        lines += [f'### {name}', '',
-                  '| 조합 (1/25/50/75R) | Python | Java | 차이 | 상대 차이 | 처음 1원 넘게 달라진 라운드 |',
-                  '|---|---|---|---|---|---|']
-        for combo, py, jv, d, rel, fr in s['worst']:
+        bad = [r for r in s['worst'] if r[3] != 0 or r[5] is not None]
+        lines += [f'### {name}', '']
+        if not bad:
+            lines += ['차이가 있는 조합 없음', '']
+            continue
+        lines += ['| 조합 (1/25/50/75R) | 위기 대응 | Python | Java | 차이 | 상대 차이 | 처음 달라진 라운드 |',
+                  '|---|---|---|---|---|---|---|']
+        for combo, py, jv, d, rel, fr, dec in bad:
             names = ' → '.join(CARDS[c]['name'] for c in combo)
-            lines.append(f'| {names} | {py:,} | {jv:,} | {d:+,} | {rel:+.5f}% | {fr if fr else "-"} |')
+            dec_text = ', '.join(f'{r}R {c}' for r, c in dec.items()) or '-'
+            lines.append(f'| {names} | {dec_text} | {py:,} | {jv:,} | {d:+,} | {rel:+.5f}% | {fr if fr else "-"} |')
         if s['errors']:
             lines.append(f'\nJava 호출 오류: {s["errors"]}건')
         lines.append('')
@@ -257,5 +308,9 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser()
     ap.add_argument('--n', type=int, default=500, help='시나리오당 조합 수 (7920 이상이면 전수)')
     ap.add_argument('--seed', type=int, default=42)
+    ap.add_argument('--strict', action='store_true', help='차이가 하나라도 있으면 종료 코드 1 (CI용)')
+    ap.add_argument('--no-report', action='store_true', help='compare_report.md를 쓰지 않음')
     args = ap.parse_args()
-    run(args.n, args.seed)
+    passed = run(args.n, args.seed, write=not args.no_report)
+    if args.strict and not passed:
+        sys.exit(1)

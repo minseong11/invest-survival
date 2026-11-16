@@ -9,8 +9,14 @@ V2 모델 A/B 학습 (6주차)
                      일반화 검증은 모델 A의 2019~2024 테스트로 한다.
 
 입력 26차원·타겟(Card_Contribution)·XGBoost 설정은 recommend_v2.py와 동일.
-내부 평가는 같은 게임(sim_id)의 행이 학습/평가에 섞이지 않도록 게임 단위로 나눈다.
-  (기존 recommend_v2.py는 행 단위 무작위 분할 → 같은 게임 행이 양쪽에 들어가 점수가 높게 나옴)
+내부 참고 점수는 두 가지로 계산한다.
+  1) 게임 단위 무작위 분할: 같은 게임(sim_id)의 행이 학습/평가에 섞이지 않게 나눔
+     (기존 recommend_v2.py는 행 단위 무작위 분할 → 같은 게임 행이 양쪽에 들어가 점수가 높게 나옴)
+     ※ 시작일이 같거나 며칠 차이인 게임은 거의 같은 시장을 지나가므로, 게임 단위로 나눠도
+       같은 시기의 시장이 학습·평가 양쪽에 들어간다 → 여전히 높게 나오는 값
+  2) (#125) 시간 순서 분할: 시작일이 이른 80% 게임으로 학습, 그 뒤 게임으로 평가.
+     학습 게임이 끝나는 날(시작일 + 100거래일)까지는 평가에서 뺀다 → 두 구간의 게임 기간이 겹치지 않음
+     "아직 보지 못한 시기"에 대한 점수라서 2)가 실제 사용 상황에 더 가깝다.
 ※ 여기 나오는 R²는 학습 기간 안의 참고치. 실제 성능 평가는 7주차 2019~2024 테스트.
 
 실행: python3 train_v2_ab.py
@@ -59,12 +65,35 @@ def make_xgb():
     )
 
 
+def time_ordered_split(df: pd.DataFrame, train_ratio: float = 0.8):
+    """
+    (#125) 시간 순서 분할 → (학습 행 위치, 평가 행 위치, 학습 마지막 시작일, 평가 첫 시작일)
+      - 게임을 시작일 순으로 줄 세워 앞쪽 train_ratio는 학습
+      - 학습 게임 중 가장 늦게 끝나는 날(마지막 학습 시작일의 100번째 거래일)보다 늦게 시작한 게임만 평가
+        (그 사이에 시작한 게임은 학습 게임과 기간이 겹치므로 참고 점수 계산에서 뺀다)
+    평가할 게임이 없으면 (None, None, None, None)
+    """
+    starts = pd.to_datetime(df['start_date'])
+    game_starts = starts.groupby(df['sim_id'].values).first().sort_values()
+    if len(game_starts) < 10:
+        return None, None, None, None
+    cut_start = game_starts.iloc[int(len(game_starts) * train_ratio) - 1]
+    cut_end = pd.to_datetime(game_end_dates(pd.Series([cut_start.strftime('%Y-%m-%d')])).iloc[0])
+    if pd.isna(cut_end):
+        return None, None, None, None
+    tr_idx = np.where(starts.values <= cut_start.to_datetime64())[0]
+    te_idx = np.where(starts.values > cut_end.to_datetime64())[0]
+    if len(tr_idx) == 0 or len(te_idx) == 0:
+        return None, None, None, None
+    return tr_idx, te_idx, cut_start, starts.iloc[te_idx].min()
+
+
 def train_one(df: pd.DataFrame, name: str, path: str):
     X = df[FEATURE_COLS].values
     y = df['Card_Contribution'].values
     groups = df['sim_id'].values
 
-    # 게임 단위 분할로 참고 점수 계산
+    # 1) 게임 단위 무작위 분할로 참고 점수 계산
     splitter = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     tr_idx, te_idx = next(splitter.split(X, y, groups))
     model = make_xgb()
@@ -72,6 +101,15 @@ def train_one(df: pd.DataFrame, name: str, path: str):
     pred = model.predict(X[te_idx])
     r2 = r2_score(y[te_idx], pred)
     mae = mean_absolute_error(y[te_idx], pred)
+
+    # 2) (#125) 시간 순서 분할로 참고 점수 계산
+    t_tr, t_te, t_cut, t_first = time_ordered_split(df)
+    if t_tr is not None:
+        t_model = make_xgb()
+        t_model.fit(X[t_tr], y[t_tr])
+        t_pred = t_model.predict(X[t_te])
+        t_r2 = r2_score(y[t_te], t_pred)
+        t_mae = mean_absolute_error(y[t_te], t_pred)
 
     # 저장용 모델은 전체 데이터로 다시 학습
     final = make_xgb()
@@ -83,7 +121,12 @@ def train_one(df: pd.DataFrame, name: str, path: str):
     print(f'\n[{name}]')
     print(f'  게임 수: {df["sim_id"].nunique():,}  /  행 수: {len(df):,}')
     print(f'  시작일 범위: {starts.min().date()} ~ {starts.max().date()}')
-    print(f'  게임 단위 분할 참고치  R²: {r2:.4f}  MAE: {mae:.4f}%')
+    print(f'  게임 단위 무작위 분할 참고치  R²: {r2:.4f}  MAE: {mae:.4f}%  (같은 시기 시장이 양쪽에 들어가 높게 나옴)')
+    if t_tr is not None:
+        print(f'  시간 순서 분할 참고치        R²: {t_r2:.4f}  MAE: {t_mae:.4f}%  '
+              f'(학습 ~{t_cut.date()} 시작 {len(t_tr):,}행 / 평가 {pd.Timestamp(t_first).date()}~ 시작 {len(t_te):,}행)')
+    else:
+        print('  시간 순서 분할 참고치        계산 생략 (게임 수 부족)')
     print(f'  저장: {path}')
 
 

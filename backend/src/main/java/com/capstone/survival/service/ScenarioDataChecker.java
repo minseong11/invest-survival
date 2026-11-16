@@ -27,6 +27,8 @@ import java.util.*;
  *               상장된 종목은 100라운드 각 날짜마다 직전 가격이 MAX_GAP_DAYS일 이내인지
  *               (게임은 빈 날짜에 직전 가격을 쓰므로, 오래 비어 있으면 가격이 멈춘 것처럼 계산됨)
  *   4) (11주차) 뉴스: 날짜가 1R~100R 안인지, level이 danger/caution/positive인지, 헤드라인·출처가 있는지
+ *      (#125) 위기 대응 뉴스(decision)가 실제로 몇 라운드에 걸리는지 로그로 남긴다.
+ *             카드 선택 라운드·1·100라운드에 걸리면 위기 대응 없이 일반 뉴스로만 표시되므로 경고만 남김 (기동은 계속)
  * 하나라도 실패하면 원인을 모아 IllegalStateException → 서버 기동 중단
  */
 @Slf4j
@@ -38,6 +40,7 @@ public class ScenarioDataChecker {
     private static final int MAX_GAP_DAYS = 7;              // 주말+연휴를 넘는 공백이면 빈 구간으로 판단
     private static final int WINDOW_CALENDAR_DAYS = 200;    // 100거래일 ≈ 145일 → 여유 있게 200일만 조회
     private static final Set<String> NEWS_LEVELS = Set.of("danger", "caution", "positive");
+    private static final Set<Integer> CARD_SELECT_ROUNDS = Set.of(1, 25, 50, 75);   // GameService와 같은 값
 
     private final ScenarioRepository scenarioRepository;
     private final CardRepository cardRepository;
@@ -152,6 +155,7 @@ public class ScenarioDataChecker {
         LocalDate lastDate = roundDates.get(roundDates.size() - 1);
 
         List<String> placed = new ArrayList<>();
+        List<String> decisionRounds = new ArrayList<>();
         for (NewsEvent e : newsEventRepository.findByScenarioIdOrderByEventDate(scenario.getId())) {
             String id = "뉴스 " + e.getId() + "(" + e.getEventDate() + ")";
             if (!NEWS_LEVELS.contains(e.getLevel())) {
@@ -168,8 +172,21 @@ public class ScenarioDataChecker {
             int round = 1;
             while (roundDates.get(round - 1).isBefore(e.getEventDate())) round++;
             placed.add(round + "R");
+
+            // (#125) 위기 대응 뉴스 — GameService.isDecisionRound와 같은 기준
+            if (e.isDecisionNews()) {
+                boolean usable = round >= 2 && round <= GAME_ROUNDS - 1 && !CARD_SELECT_ROUNDS.contains(round);
+                if (usable) {
+                    decisionRounds.add(round + "R");
+                } else {
+                    log.warn("[시나리오 검사] {} / {}: 위기 대응 뉴스가 {}R(카드 선택 라운드 또는 처음·마지막 라운드)에 걸려 "
+                            + "일반 뉴스로만 표시됩니다", label, id, round);
+                }
+            }
         }
         log.info("[시나리오 검사] {}: 뉴스 {}개 → {}", label, placed.size(), placed.isEmpty() ? "없음" : String.join(", ", placed));
+        log.info("[시나리오 검사] {}: 위기 대응 {}번 → {}", label, decisionRounds.size(),
+                decisionRounds.isEmpty() ? "없음" : String.join(", ", decisionRounds));
         return failures;
     }
 

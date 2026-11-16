@@ -11,6 +11,8 @@ import java.time.LocalDate;
  * - eventDate: 게임에 표시할 날짜 (주말·장 마감 후 발표는 다음 거래일로 이미 맞춰서 입력)
  *              거래일이 아니면 그 다음 S&P500 거래일 라운드에 표시
  * - level: danger / caution / positive (그날 뉴스 성격 기준, 결과 기준 아님)
+ * - decision: (#125) true면 이 뉴스가 나온 라운드에서 게임을 멈추고 위기 대응(버틴다/절반 판다/더 산다)을 묻는다
+ *             카드 선택 라운드(1·25·50·75)나 1·100라운드에 걸리면 일반 뉴스로만 표시
  */
 @Entity
 @Table(name = "news_event")
@@ -38,4 +40,11 @@ public class NewsEvent {
 
     @Column(name = "source_url", nullable = false, length = 500)
     private String sourceUrl;
+
+    @Column(name = "decision")
+    private Boolean decision;       // null(이전 데이터)은 false로 취급
+
+    public boolean isDecisionNews() {
+        return Boolean.TRUE.equals(decision);
+    }
 }

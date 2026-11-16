@@ -49,6 +49,12 @@ public class GameSession {
     // (11주차) 종목별 총 매수금액(원가, 원) — 평균 단가 = 원가 ÷ 수량
     //   매수 시 매수금액만큼 증가, 매도 시 매도 비율만큼 감소 (평균 단가 유지)
     //   이 기능 배포 전에 만든 세션은 null → 0으로 취급
+    // (#125) 위기 대응 선택 기록 "10:SELL_HALF|20:HOLD|60:BUY_MORE" (라운드:선택)
+    //   사후 분석에서 "같은 위기 대응을 했을 때의 전체 카드 조합"을 계산하는 데 사용
+    //   이 기능 배포 전에 만든 세션은 null → 위기 대응 없음으로 취급
+    @Column(name = "decisions")
+    private String decisions;
+
     private Double spxCost;
     private Double ndxCost;
     private Double xauusdCost;
@@ -79,6 +85,7 @@ public class GameSession {
         this.appliedCards = "";
         this.triggerCount = "";
         this.offeredCards = "";
+        this.decisions = "";
         this.spxCost = 0.0;
         this.ndxCost = 0.0;
         this.xauusdCost = 0.0;
@@ -96,6 +103,11 @@ public class GameSession {
         this.usoCost = usoCost;
         this.aaplCost = aaplCost;
         this.tltCost = tltCost;
+    }
+
+    // (#125) 위기 대응 기록 갱신 (직렬화는 GameService에서)
+    public void updateDecisions(String decisions) {
+        this.decisions = decisions;
     }
 
     // 라운드별 제시 후보 갱신 (직렬화는 GameService에서)
