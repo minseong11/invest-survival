@@ -301,24 +301,43 @@ def format_already(already_cards: List[int]) -> str:
     return '\n'.join(format_card_line(cid) for cid in already_cards)
 
 
+def volatility_words(vol: float) -> str:
+    """일별 수익률 표준편차(%)를 쉬운 말로 (S&P500 장기 평균은 약 1%)"""
+    v = abs(vol)
+    if v < 0.8:
+        return '잠잠한 편'
+    if v < 1.5:
+        return '보통'
+    return '크게 출렁이는 편'
+
+
 def build_prompt(req: V2FeedbackRequest) -> str:
     """
     (v8.0) LLM은 "왜 지금 이 카드인지"만 설명하고, 카드 규칙(발동 조건·비율·횟수)은 쓰지 않는다.
     카드 규칙은 응답에 프로그램이 CARD_FACTS 값으로 직접 붙인다 (card_rule_header).
     LLM이 쓸 수 있는 숫자는 allowed_numbers()에 있는 값(시장 지표, V2 예측 기여도, 라운드)뿐이다.
+    (12주차) 게임 화면용으로 짧고 쉬운 해요체. 시장 값은 소수 1자리로 넘기고,
+    변동성은 숫자 대신 쉬운 말로 쓰게 한다.
     """
     rankings_text = format_rankings(req.rankings)
     already_text = format_already(req.alreadyCards)
     return (
-        f'현재 시장: SPX 누적수익률 {req.spxReturnSoFar}%, '
-        f'변동성 {req.spxVolatilitySoFar}, MDD {req.spxMddSoFar}%\n'
+        f'현재 시장: S&P500이 게임 시작 후 {req.spxReturnSoFar:.1f}%, '
+        f'고점 대비 최대 {req.spxMddSoFar:.1f}%까지 떨어진 적 있음, '
+        f'하루 등락폭은 {volatility_words(req.spxVolatilitySoFar)}\n'
         f'현재 라운드: {req.currentRound}\n\n'
         f'이미 보유한 카드(참고용 발동 조건):\n{already_text}\n\n'
         f'후보 카드 순위(참고용 발동 조건, 기여도는 V2 모델의 예측값):\n{rankings_text}\n\n'
-        f'1위 카드가 지금 시장 상황에서 왜 유리할 수 있는지 2~3문장의 한국어 평문으로 설명해줘.\n'
+        f'게임을 처음 하는 사람에게, 1위 카드가 지금 시장에서 왜 유리할 수 있는지 설명해줘.\n'
         f'규칙:\n'
+        f'- 2문장, 문장마다 40자 안팎으로 짧게. 해요체(~해요, ~있어요)로 써.\n'
+        f'- 첫 문장은 지금 시장이 어떤지 쉬운 말로, 둘째 문장은 그래서 1위 카드가 왜 맞는지.\n'
+        f'- 숫자는 꼭 필요할 때 시장 수익률·최대 낙폭 중 하나만, 소수 1자리로 써. '
+        f'변동성은 숫자를 쓰지 말고 "크게 출렁이고 있어요"처럼 말로 써.\n'
+        f'- 기여도 숫자는 쓰지 마. 화면에 따로 표시돼.\n'
+        f'- "MDD", "변동성", "기여도", "SPX" 같은 용어 대신 쉬운 말을 써.\n'
+        f'- 단정하지 마. "기대됩니다", "확실" 대신 "~할 수 있어요"로 써.\n'
         f'- 카드의 발동 조건, 매수·매도 비율, 최대 횟수는 쓰지 마. 카드 규칙은 화면에 따로 정확하게 표시돼.\n'
-        f'- 숫자는 위에 나온 시장 수치와 예측 기여도만 그대로 쓸 수 있어. 기여도를 쓸 때는 "예측"이라고 밝혀.\n'
         f'- 마크다운(#, **, 목록 기호)은 쓰지 마.\n'
         f'- 카드 로직에 없는 내용은 지어내지 마.'
     )
@@ -333,14 +352,38 @@ def card_rule_header(card_id: int) -> str:
 
 
 def allowed_numbers(req: V2FeedbackRequest) -> List[float]:
-    """LLM 설명에 써도 되는 숫자 = 서버가 준 값 (부호 무시)"""
+    """LLM 설명에 써도 되는 숫자 = 서버가 준 값 (부호 유지 — 방향 검사에 사용)"""
     vals = [req.spxReturnSoFar, req.spxVolatilitySoFar, req.spxMddSoFar, req.currentRound]
     vals += [r.contribution for r in req.rankings]
-    return [abs(float(v)) for v in vals]
+    return [float(v) for v in vals]
 
 
 # 단위가 붙은 숫자만 검사 (%, %p, 회, 번, 배, 라운드) — "1위", "2~3문장" 같은 표현은 제외
-_NUM_RE = re.compile(r'(\d+(?:\.\d+)?)\s*(%p|%|회|번|배|라운드)')
+# 앞의 부호(+, -, −)도 함께 잡는다
+_NUM_RE = re.compile(r'([+\-−]?)(\d+(?:\.\d+)?)\s*(%p|%|회|번|배|라운드)')
+
+# (12주차) 숫자 바로 뒤에 오는 방향 표현 — 서버 값의 부호와 반대면 막는다 (교수님 피드백 1)
+_DOWN_WORDS = ('하락', '떨어', '빠졌', '빠진', '내려', '내린', '감소', '줄어', '손실', '마이너스')
+_UP_WORDS = ('상승', '올랐', '오른', '올라', '증가', '늘어', '플러스')
+
+
+def _claimed_sign(text: str, m: re.Match) -> int:
+    """문장이 말하는 방향: -1(하락), +1(상승), 0(알 수 없음)"""
+    sign = m.group(1)
+    if sign in ('-', '−'):
+        return -1
+    if sign == '+':
+        return 1
+    window = text[m.end(): m.end() + 8]
+    for stop in ('.', ',', '\n'):
+        window = window.split(stop)[0]
+    down = any(w in window for w in _DOWN_WORDS)
+    up = any(w in window for w in _UP_WORDS)
+    if down and not up:
+        return -1
+    if up and not down:
+        return 1
+    return 0
 
 
 def unexpected_numbers(text: str, req: V2FeedbackRequest) -> List[str]:
@@ -350,19 +393,27 @@ def unexpected_numbers(text: str, req: V2FeedbackRequest) -> List[str]:
     서버 값(소수 4자리)을 LLM이 소수 1~4자리로 반올림해 쓴 경우는 허용한다
     (-13.1912 → 13.19, 13.2). 정수로 쓴 경우는 정확히 같을 때만 허용한다
     — 정수 반올림까지 허용하면 카드 조건(-3%, -5% 등)이 우연히 통과할 수 있음 (GAP 1~5).
+    (12주차) 크기가 맞아도 방향이 반대면 막는다: 서버 값 -13.19인데 "13.2% 상승" → 걸림.
     """
     allowed = allowed_numbers(req)
     bad = []
     for m in _NUM_RE.finditer(text):
-        raw = m.group(1)
+        raw = m.group(2)
         v = float(raw)
         digits = len(raw.split('.')[1]) if '.' in raw else 0
-        ok = any(
-            abs(v - a) < 1e-9 or (digits >= 1 and abs(v - round(a, digits)) < 1e-9)
-            for a in allowed
-        )
+        claimed = _claimed_sign(text, m)
+        ok = False
+        for a in allowed:
+            same_size = abs(v - abs(a)) < 1e-9 or (
+                digits >= 1 and abs(v - round(abs(a), digits)) < 1e-9)
+            if not same_size:
+                continue
+            actual = 0 if a == 0 else (1 if a > 0 else -1)
+            if claimed == 0 or actual == 0 or claimed == actual:
+                ok = True
+                break
         if not ok:
-            bad.append(m.group(0))
+            bad.append(m.group(0).strip())
     return bad
 
 
@@ -538,15 +589,14 @@ def build_fallback_feedback(req: V2FeedbackRequest) -> str:
     top_fact = CARD_FACTS.get(top.cardId)
     top_name = top_fact.name if top_fact else CARD_NAMES.get(top.cardId, f'카드{top.cardId}')
     lines = [
-        f'AI 추천: {top_name}',
-        card_rule_header(top.cardId),
-        'V2 예측 기여도(실측 아님): ' + ', '.join(
-            f'{CARD_FACTS[r.cardId].name if r.cardId in CARD_FACTS else r.cardId} {r.contribution:+.2f}%'
+        '설명 문장을 확인하지 못해서, 확인된 예측값과 카드 규칙만 보여드려요.',
+        '예측 기여도(실측 아님): ' + ', '.join(
+            f'{CARD_FACTS[r.cardId].name if r.cardId in CARD_FACTS else r.cardId} {r.contribution:+.1f}%'
             for r in ranked
         ),
-        '(AI 설명을 검증하지 못해 확인된 카드 규칙과 예측값만 표시해요)',
+        card_rule_header(top.cardId),
     ]
-    return '\n'.join(lines)
+    return '\n'.join(x for x in lines if x)
 
 
 @app.post('/ai/v2/feedback', response_model=V2FeedbackResponse)
@@ -574,7 +624,7 @@ def generate_feedback(req: V2FeedbackRequest):
     except Exception as e:
         # (v8.0) 빈 문자열 대신 "생성 실패" 상태를 알리고, 카드 규칙은 그대로 보여준다
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
-        failed = '\n'.join(x for x in [header, '(AI 설명 생성에 실패했어요. 카드 규칙만 표시해요)'] if x)
+        failed = '\n'.join(x for x in ['AI 설명을 만들지 못했어요. 카드 규칙만 보여드려요.', header] if x)
         return V2FeedbackResponse(feedback=failed, verified=None, status='failed')
 
     # 사용자에게 보내기 전 검사 3가지
@@ -593,7 +643,7 @@ def generate_feedback(req: V2FeedbackRequest):
     issues += [f'[조건부로 오기재] {x}' for x in unconditional_misdescribed(text)]
 
     if not issues:
-        feedback = '\n\n'.join(x for x in [header, text] if x)
+        feedback = '\n\n'.join(x for x in [text, header] if x)   # (12주차) 설명 먼저, 규칙은 아래
         return V2FeedbackResponse(feedback=feedback, verified=True, status='llm')
 
     print('⚠️  LLM 피드백 검사 실패 → 대체 문장으로 응답')

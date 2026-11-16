@@ -1,16 +1,13 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/game_session.dart';
 import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
-import '../models/fixed_ranking.dart';
 import '../models/news_item.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
-import '../services/mock_data.dart';
 import '../widgets/stock_chart.dart';
 import '../widgets/holdings_widget.dart';
 import '../widgets/news_banner.dart';
@@ -114,15 +111,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
     return null;
   }
-
-  // 25·50라운드: V2는 정답 추천이 아니라 참고 예측임을 안내 (중간보고서 4장 평가 결과 반영)
-  static const String _v2Notice =
-      'AI 예측은 과거 시장으로 학습한 참고용이에요. '
-      '처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요.';
-
-  // 지금 후보 카드들의 평소 순위 (시장을 보지 않는 고정 순위)
-  List<int> get _fixedOrder =>
-      FixedRanking.order(_currentRound1, _currentCardOptions);
 
   // AI 예측 1순위 카드 ID (V2 결과만 사용. V1.5 사전 추천은 v6.0에서 제거)
   int? get _aiRecommendedCardId {
@@ -232,17 +220,134 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   // =============================================
-  // AI 피드백 다이얼로그 (메모지처럼 화면 위에 오버레이)
+  // AI 설명 시트 (12주차: 한눈에 보이게)
+  //  ① 후보 3장 예측 순위 (막대)  ② 왜 그런지 짧은 설명  ③ 카드 규칙  ④ 참고용 안내
+  //  서버 feedback 중 "카드 규칙 · " 줄은 따로 떼어 회색 상자에 넣는다
   // =============================================
   void _showFeedbackDialog() {
     if (_aiFeedback.isEmpty) return;
+
+    final lines = _aiFeedback
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    final ruleLines =
+        lines.where((l) => l.startsWith('카드 규칙 · ')).toList();
+    final reason = lines
+        .where((l) =>
+            !l.startsWith('카드 규칙 · ') && !l.startsWith('예측 기여도(실측 아님)'))
+        .join('\n');
+
+    final ranked = [..._lastRankings]..sort((a, b) => a.rank.compareTo(b.rank));
+    final maxAbs = ranked.isEmpty
+        ? 1.0
+        : ranked
+            .map((r) => r.contribution.abs())
+            .reduce((a, b) => a > b ? a : b)
+            .clamp(0.1, double.infinity);
+
     showTossSheet(
       context,
-      title: 'AI가 이렇게 예측했어요',
-      body: Text(
-        _aiFeedback,
-        style: const TextStyle(
-            fontSize: 16, height: 1.65, color: TossColors.grey700),
+      title: 'AI는 이 카드를 골랐어요',
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ① 예측 순위
+          for (final r in ranked) _buildRankBar(r, maxAbs.toDouble()),
+          const SizedBox(height: 4),
+          const Text('막대는 이 카드가 최종 수익률에 더할 것으로 예측한 값이에요',
+              style: TossText.small),
+
+          // ② 이유
+          if (reason.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            const Text('왜 이렇게 예측했나요?', style: TossText.body2),
+            const SizedBox(height: 6),
+            Text(reason,
+                style: const TextStyle(
+                    fontSize: 16, height: 1.6, color: TossColors.grey800)),
+          ],
+
+          // ③ 카드 규칙 (서버가 CARD_FACTS로 붙인 정확한 문장)
+          if (ruleLines.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            InfoBox(
+              child: Text(
+                ruleLines.map((l) => l.replaceFirst('카드 규칙 · ', '')).join('\n'),
+                style: TossText.caption.copyWith(color: TossColors.grey700),
+              ),
+            ),
+          ],
+
+          // ④ 참고용 안내 (평가 결과 반영)
+          const SizedBox(height: 12),
+          const Text(
+            'AI 예측은 과거 시장으로 학습한 참고용이에요. 처음 보는 시장에서는 틀릴 수 있어요.',
+            style: TossText.small,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRankBar(CardRanking r, double maxAbs) {
+    final card  = CardInfo.fromId(r.cardId);
+    final first = r.rank == 1;
+    final ratio = (r.contribution.abs() / maxAbs).clamp(0.0, 1.0);
+    final color = first ? TossColors.blue500 : TossColors.grey300;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 128,
+            child: Row(
+              children: [
+                Text(card?.emoji ?? '🃏', style: const TextStyle(fontSize: 16)),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    card?.name ?? r.cardName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: first ? FontWeight.w700 : FontWeight.w500,
+                        color: first ? TossColors.grey900 : TossColors.grey600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (_, c) => Align(
+                alignment: Alignment.centerLeft,
+                child: Container(
+                  height: 10,
+                  width: (c.maxWidth * ratio).clamp(4.0, c.maxWidth).toDouble(),
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(5),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 52,
+            child: Text(
+              '${r.contribution >= 0 ? '+' : ''}${r.contribution.toStringAsFixed(1)}%',
+              textAlign: TextAlign.right,
+              style: TossText.number.copyWith(
+                  fontSize: 14, color: TossColors.rate(r.contribution)),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -299,6 +404,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // 자동 진행
   // =============================================
   void _startAutoPlay() {
+    _autoTimer?.cancel();
+    if (_isLastRound) return;
     setState(() => _isAutoPlaying = true);
     _autoTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       if (!mounted) return;
@@ -330,22 +437,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _autoTimer?.cancel();
     _autoTimer = null;
     if (mounted) setState(() => _isAutoPlaying = false);
-  }
-
-  void _nextRound() {
-    if (_isLastRound) return;
-    final next = _currentRoundIndex + 2;
-    setState(() {
-      _currentRoundIndex++;
-      _triggeredCardIds =
-          _session.rounds[_currentRoundIndex].triggeredCards;
-      if (_session.isCardSelectRound(next)) {
-        _cardSelected    = false;
-        _triggeredCardIds = [];
-        _resetAiState();
-      }
-    });
-    _onRoundEntered();
   }
 
   void _goToResult() {
@@ -381,13 +472,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
-  }
-
-  void _onMockCardSelected(int cardId) {
-    final mockData = MockData.getActionResult(_currentRoundIndex);
-    final result   = ActionResult.fromJson(
-        mockData['data'] as Map<String, dynamic>);
-    _applyActionResult(result, cardId);
   }
 
   void _applyActionResult(ActionResult result, int selectedCardId) {
@@ -431,35 +515,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _triggeredCardIds = [];
       _resetAiState();
     });
-  }
-
-  void _loadMockSession() {
-    _stopAutoPlay();
-    final mockSession = GameSession.fromJson(
-        MockData.gameSession['data'] as Map<String, dynamic>);
-    setState(() {
-      _session            = mockSession;
-      _currentRoundIndex  = 0;
-      _cardSelected       = false;
-      _currentCardOptions = mockSession.firstCardOptions;
-      _selectedCardIds.clear();
-      _lastAddedCardId    = null;
-      _triggeredCardIds   = [];
-      _resetAiState();
-      _pendingSelectNews  = [];
-      _selectNews         = [];
-      _shownNewsKeys.clear();
-      _newsLog.clear();
-      _bannerNews         = null;
-      _bannerSticky       = false;
-    });
-    _bannerTimer?.cancel();
+    // (12주차) 카드를 고르면 재생 버튼을 누르지 않아도 바로 다음 라운드로 진행
+    _startAutoPlay();
   }
 
   // =============================================
   // Build (토스 스타일)
   //  회색 배경 위에 흰 섹션: 자산 요약+차트 → 내 포트폴리오 → 전략 선택
-  //  하단에는 항상 큰 버튼 하나 (다음 라운드 / 이 전략으로 할게요)
+  //  하단에는 항상 큰 버튼 하나 (멈추기·이어서 / 이 전략으로 할게요 / 결과 보기)
   // =============================================
   double get _displayAsset =>
       _currentRound.roundAsset ?? _session.initialAsset.toDouble();
@@ -475,12 +538,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         Column(
           children: [
             _buildHeader(),
-            // 개발용 버튼: 디버그 실행에서만 표시 (릴리스·데모 빌드에서는 숨김)
-            if (kDebugMode)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: _buildMockButton(),
-              ),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
@@ -643,45 +700,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ── 개발용 버튼 ────────────────────────────
-  Widget _buildMockButton() {
-    return Row(
-      children: [
-        const TossBadge(
-            label: '개발용', bg: TossColors.grey200, fg: TossColors.grey600),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _devBtn('세션 초기화', _loadMockSession),
-              _devBtn(
-                '임시 카드선택',
-                !_cardSelected
-                    ? () => _onMockCardSelected(
-                        _currentCardOptions.isNotEmpty
-                            ? _currentCardOptions[0]
-                            : 1)
-                    : null,
-              ),
-              _devBtn('결과 화면', _goToResult),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _devBtn(String label, VoidCallback? onTap) {
-    return TossChipButton(
-      label: label,
-      onTap: onTap,
-      bg: TossColors.white,
-      fg: onTap == null ? TossColors.grey400 : TossColors.grey700,
-    );
-  }
-
   // ── 자산 요약 + 차트 ───────────────────────
   Widget _buildSummary() {
     final asset   = _displayAsset;
@@ -765,12 +783,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             InfoBox(child: Text(_noAiReason!, style: TossText.caption)),
           ],
 
-          // 25·50라운드: 평소 순위 + 예측 안내
-          if (_canUseV2) ...[
-            const SizedBox(height: 12),
-            _buildV2Info(_fixedOrder),
-          ],
-
           // (11주차) 오늘 나온 뉴스 — 카드와 연결하지 않고 참고용으로만
           if (_selectNews.isNotEmpty) ...[
             const SizedBox(height: 12),
@@ -844,39 +856,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ],
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  // ── 평소 순위 (고정 순위) + AI 예측 안내 ──
-  // 평소 순위 = 학습 데이터(2006~2018)에서 이 라운드에 각 카드가 낸 평균 성과 순서.
-  // 지금 시장은 보지 않음 → AI 예측과 비교해 보라는 의미로 함께 표시
-  Widget _buildV2Info(List<int> order) {
-    final names = order
-        .map((id) => CardInfo.fromId(id)?.name ?? '카드 $id')
-        .join(' › ');
-    return InfoBox(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (order.isNotEmpty) ...[
-            Text.rich(
-              TextSpan(children: [
-                const TextSpan(
-                    text: '평소 순위  ',
-                    style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: TossColors.grey700)),
-                TextSpan(
-                    text: names,
-                    style: const TextStyle(color: TossColors.grey700)),
-              ]),
-              style: TossText.caption,
-            ),
-            const SizedBox(height: 4),
-          ],
-          const Text(_v2Notice, style: TossText.caption),
         ],
       ),
     );
@@ -991,7 +970,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   if (showContrib) ...[
                     const SizedBox(height: 4),
                     Text(
-                      '예측 ${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(2)}%',
+                      '예측 ${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(1)}%',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -1040,50 +1019,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
+  // 진행 중: 일시정지/이어서 버튼 하나. 마지막 라운드: 결과 보기
+  // (12주차) 다음 라운드 버튼 제거 — 카드를 고르면 자동으로 넘어감
   Widget _buildControls() {
-    return Row(
-      children: [
-        Pressable(
-          onTap: _isAutoPlaying ? _stopAutoPlay : _startAutoPlay,
-          child: AnimatedContainer(
-            duration: TossMotion.base,
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: _isAutoPlaying ? TossColors.blue50 : TossColors.white,
-              borderRadius: BorderRadius.circular(TossRadius.lg),
-            ),
-            child: AnimatedSwitcher(
-              duration: TossMotion.fast,
-              child: Icon(
-                _isAutoPlaying
-                    ? Icons.pause_rounded
-                    : Icons.play_arrow_rounded,
-                key: ValueKey(_isAutoPlaying),
-                color: _isAutoPlaying
-                    ? TossColors.blue500
-                    : TossColors.grey700,
-                size: 28,
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: TossButton(
-            label: _isAutoPlaying
-                ? '자동으로 넘기는 중'
-                : _isLastRound
-                    ? '결과 보기'
-                    : '다음 라운드',
-            onTap: _isAutoPlaying
-                ? null
-                : _isLastRound
-                    ? _goToResult
-                    : _nextRound,
-          ),
-        ),
-      ],
+    if (_isLastRound) {
+      return TossButton(label: '결과 보기', onTap: _goToResult);
+    }
+    return TossButton(
+      label: _isAutoPlaying ? '잠시 멈추기' : '이어서 진행하기',
+      type: _isAutoPlaying ? TossButtonType.secondary : TossButtonType.primary,
+      icon: Icon(
+        _isAutoPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+        size: 22,
+        color: _isAutoPlaying ? TossColors.grey700 : TossColors.white,
+      ),
+      onTap: _isAutoPlaying ? _stopAutoPlay : _startAutoPlay,
     );
   }
 }

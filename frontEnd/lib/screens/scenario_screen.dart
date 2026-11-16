@@ -1,9 +1,6 @@
-import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import '../models/scenario.dart';
-import '../models/game_session.dart';
 import '../services/game_service.dart';
-import '../services/mock_data.dart';
 import '../widgets/scenario_card.dart';
 import '../widgets/toss/toss_widgets.dart';
 import '../theme/toss_theme.dart';
@@ -50,17 +47,6 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     }
   }
 
-  // 임시 데이터로 불러오기 (fromJson 거침)
-  void _loadMockScenarios() {
-    setState(() => _isLoading = true);
-    final List<dynamic> list = MockData.scenarios['data'] as List<dynamic>;
-    final scenarios = list.map((json) => Scenario.fromJson(json)).toList();
-    setState(() {
-      _scenarios = scenarios;
-      _isLoading = false;
-    });
-  }
-
   Future<void> _onScenarioTap(Scenario scenario) async {
     setState(() => _isStarting = true);
     try {
@@ -78,16 +64,6 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     }
   }
 
-  void _startMockGame(Scenario scenario) {
-    final gameSession = GameSession.fromJson(
-      MockData.gameSession['data'] as Map<String, dynamic>,
-    );
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => GameScreen(session: gameSession)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -100,55 +76,11 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
               padding: const EdgeInsets.fromLTRB(24, 36, 24, 8),
               child: _buildHeader(),
             ),
-            // 개발용 버튼: 디버그 실행에서만 표시
-            if (kDebugMode)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
-                child: _buildMockButtons(),
-              ),
             const SizedBox(height: 16),
             Expanded(child: _buildBody()),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildMockButtons() {
-    return Row(
-      children: [
-        const TossBadge(
-            label: '개발용', bg: TossColors.grey100, fg: TossColors.grey600),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              _mockButton(label: '수동 요청', onTap: _loadScenarios),
-              _mockButton(label: '임시 시나리오', onTap: _loadMockScenarios),
-              _mockButton(
-                label: '임시 게임',
-                onTap: _scenarios.isEmpty
-                    ? null
-                    : () => _startMockGame(_scenarios[0]),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _mockButton({
-    required String label,
-    required VoidCallback? onTap,
-  }) {
-    return TossChipButton(
-      label: label,
-      onTap: onTap,
-      bg: TossColors.grey100,
-      fg: onTap == null ? TossColors.grey400 : TossColors.grey700,
     );
   }
 
@@ -185,15 +117,6 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
               onTap: _loadScenarios,
               height: 52,
             ),
-            if (kDebugMode) ...[
-              const SizedBox(height: 8),
-              TossButton(
-                label: '임시 데이터로 계속하기',
-                type: TossButtonType.secondary,
-                onTap: _loadMockScenarios,
-                height: 52,
-              ),
-            ],
           ],
         ),
       );
