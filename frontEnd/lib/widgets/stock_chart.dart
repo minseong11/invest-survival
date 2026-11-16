@@ -6,11 +6,14 @@ import '../theme/toss_theme.dart';
 class StockChart extends StatefulWidget {
   final List<RoundData> rounds;
   final double initialAsset;
+  // (12주차) 카드를 고른 라운드의 위치(0부터) — 내 자산 선 위에 흰 점으로 표시
+  final Set<int> cardIndexes;
 
   const StockChart({
     super.key,
     required this.rounds,
     this.initialAsset = 10000000,
+    this.cardIndexes = const {},
   });
 
   @override
@@ -52,6 +55,16 @@ class _StockChartState extends State<StockChart> {
       }
     }
     return spots;
+  }
+
+  // 뉴스가 나온 날의 색 (위험: 주황 / 긍정: 초록 / 그 외: 회색). 뉴스 없으면 null
+  Color? _newsColor(int idx) {
+    if (idx < 0 || idx >= widget.rounds.length) return null;
+    final news = widget.rounds[idx].news;
+    if (news.isEmpty) return null;
+    if (news.any((n) => n.level == 'danger')) return TossColors.orange500;
+    if (news.any((n) => n.level == 'positive')) return TossColors.green500;
+    return TossColors.grey500;
   }
 
   double get _minY {
@@ -97,6 +110,12 @@ class _StockChartState extends State<StockChart> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
+              if (widget.cardIndexes.isNotEmpty) ...[
+                _legendRing(assetColor, '카드 선택'),
+                const SizedBox(width: 12),
+              ],
+              _legendItem(TossColors.orange500, '뉴스'),
+              const SizedBox(width: 12),
               if (hasAsset) ...[
                 _legendItem(assetColor, '내 자산'),
                 const SizedBox(width: 12),
@@ -162,6 +181,16 @@ class _StockChartState extends State<StockChart> {
                       show: true,
                       getDotPainter: (spot, _, __, idx) {
                         final last = idx == spxSpots.length - 1;
+                        // 뉴스가 나온 날: 시장 선 위에 색 점
+                        final newsColor = _newsColor(spot.x.toInt());
+                        if (newsColor != null) {
+                          return FlDotCirclePainter(
+                            radius: 3,
+                            color: newsColor,
+                            strokeWidth: 1.5,
+                            strokeColor: Colors.white,
+                          );
+                        }
                         return FlDotCirclePainter(
                           radius: last ? 2.5 : 0,
                           color: TossColors.grey400,
@@ -184,6 +213,16 @@ class _StockChartState extends State<StockChart> {
                       show: true,
                       getDotPainter: (spot, _, __, idx) {
                         final last = idx == assetSpots.length - 1;
+                        // 카드를 고른 날: 흰 점 + 선 색 테두리
+                        if (!last &&
+                            widget.cardIndexes.contains(spot.x.toInt())) {
+                          return FlDotCirclePainter(
+                            radius: 3.5,
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                            strokeColor: assetColor,
+                          );
+                        }
                         return FlDotCirclePainter(
                           radius: last ? 4.5 : 0,
                           color: assetColor,
@@ -277,6 +316,26 @@ class _StockChartState extends State<StockChart> {
           height: 8,
           decoration: BoxDecoration(
               color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 5),
+        Text(label,
+            style: const TextStyle(
+                fontSize: 12, color: TossColors.grey600)),
+      ],
+    );
+  }
+
+  // 속이 빈 점 범례 (카드 선택 표시용)
+  Widget _legendRing(Color color, String label) {
+    return Row(
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: color, width: 2)),
         ),
         const SizedBox(width: 5),
         Text(label,

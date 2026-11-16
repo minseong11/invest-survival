@@ -57,6 +57,39 @@ class _GameResultScreenState extends State<GameResultScreen> {
     return 0.0;
   }
 
+  // 같은 기간 S&P500 수익률 (아무 카드 없이 시장만 들고 있었다면). 데이터 없으면 null
+  double? get _spxReturn {
+    double? first, last;
+    for (final r in widget.session.rounds) {
+      final p = r.getPrice('^SPX');
+      if (p == null || p.close <= 0) continue;
+      first ??= p.close;
+      last = p.close;
+    }
+    if (first == null || last == null) return null;
+    return (last - first) / first * 100;
+  }
+
+  // 한 줄 결론: 시장(S&P500)과 비교
+  String get _headline {
+    final mine = _finalReturnRate;
+    final spx  = _spxReturn;
+    if (spx == null) {
+      return mine >= 0 ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요';
+    }
+    final gap = (mine - spx).abs().toStringAsFixed(1);
+    if (mine >= spx) {
+      if (mine >= 0 && spx < 0) return '시장은 떨어졌지만\n수익을 냈어요';
+      return mine >= 0 ? '시장보다 $gap%p\n더 벌었어요' : '시장보다 $gap%p\n덜 잃었어요';
+    }
+    return mine >= 0 ? '시장보다 $gap%p\n덜 벌었어요' : '시장보다 $gap%p\n더 잃었어요';
+  }
+
+  bool get _beatMarket {
+    final spx = _spxReturn;
+    return spx == null ? _finalReturnRate >= 0 : _finalReturnRate >= spx;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -121,7 +154,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     const SizedBox(height: 8),
                     FadeInUp(
                       delay: const Duration(milliseconds: 120),
-                      child: _buildAssetRows(),
+                      child: _buildCompareBars(),
                     ),
                     const SizedBox(height: 8),
                     _buildAnalysisSection(),
@@ -150,7 +183,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
   // 결과 요약: 한 줄 결론 + 최종 자산 (숫자 굴러감)
   // =============================================
   Widget _buildHero() {
-    final profit  = _finalReturnRate >= 0;
+    final profit  = _beatMarket; // 시장보다 잘했으면 축하
     final initial = widget.session.initialAsset.toDouble();
     final asset   = _revealed ? _finalAsset : initial;
     final rate    = _revealed ? _finalReturnRate : 0.0;
@@ -169,8 +202,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
           Row(
             children: [
               Flexible(
-                child: Text(profit ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요',
-                    style: TossText.title1),
+                child: Text(_headline, style: TossText.title1),
               ),
               const SizedBox(width: 6),
               if (profit)
@@ -210,31 +242,58 @@ class _GameResultScreenState extends State<GameResultScreen> {
     );
   }
 
-  Widget _buildAssetRows() {
+  // =============================================
+  // 수익률 비교 막대 (토스 실적 화면처럼)
+  //  S&P500 그대로 / 내 결과 / 받은 카드 중 최선(분석이 끝나면 나타남)
+  // =============================================
+  Widget _buildCompareBars() {
+    final mine = _finalReturnRate;
+    final spx  = _spxReturn;
+    final best = _analysis?.offered?.bestCombo.finalReturnRate;
+
+    final bars = <_Bar>[
+      if (spx != null) _Bar('S&P500\n그대로', spx, false),
+      _Bar('내 결과', mine, true),
+      if (best != null) _Bar('받은 카드 중\n최선', best, false),
+    ];
+
     return TossSection(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 20),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _kvRow('시작 자산',
-              '${_formatNumber(widget.session.initialAsset.toDouble())}원'),
-          _kvRow('최종 자산', '${_formatNumber(_finalAsset)}원'),
-          _kvRow('최종 수익률', formatRate(_finalReturnRate),
-              valueColor: TossColors.rate(_finalReturnRate)),
+          const Text('수익률 비교', style: TossText.title3),
+          const SizedBox(height: 10),
+          if (spx != null) _diffLine('S&P500 그대로 뒀을 때보다', mine - spx),
+          if (best != null) _diffLine('받은 카드 중 최선보다', mine - best),
+          const SizedBox(height: 14),
+          _BarChart(bars: bars, revealed: _revealed),
         ],
       ),
     );
   }
 
-  Widget _kvRow(String k, String v, {Color? valueColor}) {
+  // "· S&P500 그대로 뒀을 때보다 +23.6%p"
+  Widget _diffLine(String label, double diff) {
+    final zero = diff.abs() < 0.05;
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          Text(k, style: TossText.sub.copyWith(fontSize: 15)),
-          const Spacer(),
-          Text(v,
-              style: TossText.number.copyWith(
-                  color: valueColor ?? TossColors.grey900)),
+          const Text('·  ', style: TossText.sub),
+          Flexible(
+            child: Text(label,
+                style: TossText.sub.copyWith(
+                    fontSize: 15, color: TossColors.grey700)),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            zero
+                ? '같아요'
+                : '${diff > 0 ? '+' : ''}${diff.toStringAsFixed(1)}%p',
+            style: TossText.number.copyWith(
+                color: zero ? TossColors.grey700 : TossColors.rate(diff)),
+          ),
         ],
       ),
     );
@@ -318,9 +377,8 @@ class _GameResultScreenState extends State<GameResultScreen> {
   // ① 받은 카드 안에서 내 순위
   Widget _buildOfferedRankCard(ResultAnalysis a, OfferedAnalysis o) {
     final p      = o.playerResult;
-    final best   = o.bestCombo;
     final isBest = p.rank == 1;
-    final gap    = best.finalReturnRate - p.finalReturnRate;
+    final gap    = o.bestCombo.finalReturnRate - p.finalReturnRate;
 
     return TossSection(
       padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
@@ -360,16 +418,6 @@ class _GameResultScreenState extends State<GameResultScreen> {
               '${gap.toStringAsFixed(1)}%p 낮았어요',
               style: TossText.sub.copyWith(color: TossColors.grey700),
             ),
-          const SizedBox(height: 14),
-          Container(height: 1, color: TossColors.grey100),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(child: _buildRateColumn('내 수익률', p.finalReturnRate)),
-              Expanded(
-                  child: _buildRateColumn('받은 카드 중 최선', best.finalReturnRate)),
-            ],
-          ),
           const SizedBox(height: 12),
           Text(
             '${a.cardPoolSize}장 전체로 보면 '
@@ -603,18 +651,6 @@ class _GameResultScreenState extends State<GameResultScreen> {
     );
   }
 
-  Widget _buildRateColumn(String label, double rate) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: TossText.small),
-        const SizedBox(height: 2),
-        Text(formatRate(rate),
-            style: TossText.number.copyWith(color: TossColors.rate(rate))),
-      ],
-    );
-  }
-
   Widget _buildCardChip(AnalysisCard? card, {bool highlight = false}) {
     if (card == null) {
       return const Text('-', style: TossText.caption);
@@ -642,6 +678,103 @@ class _GameResultScreenState extends State<GameResultScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── 막대 차트 (0% 기준선 위아래로 뻗는 세로 막대) ──
+class _Bar {
+  final String label;
+  final double value; // 수익률(%)
+  final bool mine;
+  const _Bar(this.label, this.value, this.mine);
+}
+
+class _BarChart extends StatelessWidget {
+  final List<_Bar> bars;
+  final bool revealed;
+  const _BarChart({required this.bars, required this.revealed});
+
+  static const double _area = 120; // 막대가 쓸 수 있는 전체 높이
+
+  @override
+  Widget build(BuildContext context) {
+    double maxPos = 0, maxNeg = 0;
+    for (final b in bars) {
+      if (b.value > maxPos) maxPos = b.value;
+      if (-b.value > maxNeg) maxNeg = -b.value;
+    }
+    final total = (maxPos + maxNeg) <= 0 ? 1.0 : maxPos + maxNeg;
+    final posH  = _area * maxPos / total; // 기준선 위쪽 높이
+    final negH  = _area * maxNeg / total; // 기준선 아래쪽 높이
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final b in bars)
+          Expanded(child: _column(b, posH, negH, total)),
+      ],
+    );
+  }
+
+  Widget _column(_Bar b, double posH, double negH, double total) {
+    final double h = revealed
+        ? (_area * b.value.abs() / total).clamp(3.0, _area).toDouble()
+        : 3.0;
+    final up    = b.value >= 0;
+    final color = b.mine ? TossColors.blue500 : TossColors.grey300;
+    final valueText = Text(
+      '${b.value >= 0 ? '+' : ''}${b.value.toStringAsFixed(1)}%',
+      style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          color: b.mine ? TossColors.grey900 : TossColors.grey600,
+          fontFeatures: const [FontFeature.tabularFigures()]),
+    );
+    final bar = AnimatedContainer(
+      duration: const Duration(milliseconds: 700),
+      curve: Curves.easeOutCubic,
+      width: 56,
+      height: h,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(up ? 8 : 2),
+          bottom: Radius.circular(up ? 2 : 8),
+        ),
+      ),
+    );
+
+    return Column(
+      children: [
+        // 기준선 위 (수익)
+        SizedBox(
+          height: posH + 24,
+          child: up
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [valueText, const SizedBox(height: 4), bar],
+                )
+              : null,
+        ),
+        Container(height: 1, color: TossColors.grey200),
+        // 기준선 아래 (손실)
+        SizedBox(
+          height: negH + 24,
+          child: up
+              ? null
+              : Column(
+                  mainAxisAlignment: MainAxisAlignment.start,
+                  children: [bar, const SizedBox(height: 4), valueText],
+                ),
+        ),
+        const SizedBox(height: 6),
+        Text(b.label,
+            textAlign: TextAlign.center,
+            style: TossText.small.copyWith(
+                color: b.mine ? TossColors.grey900 : TossColors.grey500,
+                fontWeight: b.mine ? FontWeight.w700 : FontWeight.w500)),
+      ],
     );
   }
 }

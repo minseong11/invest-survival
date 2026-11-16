@@ -301,6 +301,56 @@ def format_already(already_cards: List[int]) -> str:
     return '\n'.join(format_card_line(cid) for cid in already_cards)
 
 
+# (12주차) 초보자용 카드 한 줄 설명 — 숫자는 넣지 않는다 (정확한 규칙은 CARD_FACTS가 따로 표시)
+CARD_EASY = {
+    1:  '미국 대표 주식(S&P500)을 한 번에 크게 사요',
+    2:  '금을 매일 조금씩 사 모아요',
+    3:  '주식이 크게 떨어진 날에 싸게 사요',
+    4:  '주식이 폭락한 날 금으로 피해요',
+    5:  '기술주가 오르는 날 따라 사요',
+    6:  '기술주가 크게 떨어진 날 싸게 사요',
+    7:  '원유를 한 번에 사요',
+    8:  '주식이 크게 오른 날 일부를 팔아 현금을 챙겨요',
+    9:  '애플이 크게 떨어진 날 조금씩 사요',
+    10: '주식과 다르게 움직이는 채권을 매일 조금씩 사요',
+    11: '기술주를 며칠 간격으로 나눠 사요',
+}
+
+
+def market_line(req) -> str:
+    """지금 시장 한 줄 — 서버 값으로 프로그램이 직접 만든다 (LLM이 틀릴 수 없음)"""
+    r = req.spxReturnSoFar
+    if abs(r) < 0.5:
+        move = '시작 때와 비슷해요'
+    else:
+        move = f'시작 후 {abs(r):.1f}% {"하락" if r < 0 else "상승"}'
+    return f'{move} · 하루 등락은 {volatility_words(req.spxVolatilitySoFar)}'
+
+
+def default_reason(req) -> str:
+    """LLM 문장을 못 쓸 때의 '그래서' 한 줄 — 확인된 사실만"""
+    return f'AI는 후보 {len(req.rankings)}장 중 이 카드의 예측 수익이 가장 높다고 봤어요.'
+
+
+def compose_feedback(req, reason: str) -> str:
+    """
+    (12주차) 화면용 3줄 구조. 앱은 줄 머리말로 나눠서 보여준다.
+      지금 시장: (프로그램)   이 카드는: (프로그램)   그래서: (LLM 또는 기본 문장)
+      카드 규칙 · (프로그램, CARD_FACTS)
+    """
+    ranked = sorted(req.rankings, key=lambda r: r.rank)
+    if not ranked:
+        return ''
+    top = ranked[0].cardId
+    lines = [
+        f'지금 시장: {market_line(req)}',
+        f'이 카드는: {CARD_EASY.get(top, "")}' if CARD_EASY.get(top) else '',
+        f'그래서: {reason}',
+        card_rule_header(top),
+    ]
+    return '\n'.join(x for x in lines if x)
+
+
 def volatility_words(vol: float) -> str:
     """일별 수익률 표준편차(%)를 쉬운 말로 (S&P500 장기 평균은 약 1%)"""
     v = abs(vol)
@@ -328,16 +378,14 @@ def build_prompt(req: V2FeedbackRequest) -> str:
         f'현재 라운드: {req.currentRound}\n\n'
         f'이미 보유한 카드(참고용 발동 조건):\n{already_text}\n\n'
         f'후보 카드 순위(참고용 발동 조건, 기여도는 V2 모델의 예측값):\n{rankings_text}\n\n'
-        f'게임을 처음 하는 사람에게, 1위 카드가 지금 시장에서 왜 유리할 수 있는지 설명해줘.\n'
+        f'게임을 처음 하는 사람에게, 그래서 지금 왜 1위 카드가 유리할 수 있는지 딱 한 문장으로 말해줘.\n'
+        f'(시장 상황과 카드 성격은 화면에 따로 표시되니 반복하지 말고, 둘을 잇는 이유만.)\n'
         f'규칙:\n'
-        f'- 2문장, 문장마다 40자 안팎으로 짧게. 해요체(~해요, ~있어요)로 써.\n'
-        f'- 첫 문장은 지금 시장이 어떤지 쉬운 말로, 둘째 문장은 그래서 1위 카드가 왜 맞는지.\n'
-        f'- 숫자는 꼭 필요할 때 시장 수익률·최대 낙폭 중 하나만, 소수 1자리로 써. '
-        f'변동성은 숫자를 쓰지 말고 "크게 출렁이고 있어요"처럼 말로 써.\n'
-        f'- 기여도 숫자는 쓰지 마. 화면에 따로 표시돼.\n'
+        f'- 한 문장, 45자 안팎. 해요체(~해요, ~있어요)로 써.\n'
+        f'- 숫자는 쓰지 마.\n'
         f'- "MDD", "변동성", "기여도", "SPX" 같은 용어 대신 쉬운 말을 써.\n'
         f'- 단정하지 마. "기대됩니다", "확실" 대신 "~할 수 있어요"로 써.\n'
-        f'- 카드의 발동 조건, 매수·매도 비율, 최대 횟수는 쓰지 마. 카드 규칙은 화면에 따로 정확하게 표시돼.\n'
+        f'- 카드의 발동 조건, 매수·매도 비율, 최대 횟수는 쓰지 마.\n'
         f'- 마크다운(#, **, 목록 기호)은 쓰지 마.\n'
         f'- 카드 로직에 없는 내용은 지어내지 마.'
     )
@@ -585,18 +633,7 @@ def build_fallback_feedback(req: V2FeedbackRequest) -> str:
     ranked = sorted(req.rankings, key=lambda r: r.rank)
     if not ranked:
         return ''
-    top = ranked[0]
-    top_fact = CARD_FACTS.get(top.cardId)
-    top_name = top_fact.name if top_fact else CARD_NAMES.get(top.cardId, f'카드{top.cardId}')
-    lines = [
-        '설명 문장을 확인하지 못해서, 확인된 예측값과 카드 규칙만 보여드려요.',
-        '예측 기여도(실측 아님): ' + ', '.join(
-            f'{CARD_FACTS[r.cardId].name if r.cardId in CARD_FACTS else r.cardId} {r.contribution:+.1f}%'
-            for r in ranked
-        ),
-        card_rule_header(top.cardId),
-    ]
-    return '\n'.join(x for x in lines if x)
+    return compose_feedback(req, default_reason(req))
 
 
 @app.post('/ai/v2/feedback', response_model=V2FeedbackResponse)
@@ -609,11 +646,9 @@ def generate_feedback(req: V2FeedbackRequest):
       - 카드 규칙(조건·비율·횟수): 프로그램이 CARD_FACTS 값으로 직접 붙임 → LLM이 틀릴 수 없음
       - LLM 설명: 카드 규칙 숫자를 쓰지 않도록 지시 + 검사 3가지(검증기 v3, 숫자 출처, 무조건부 카드 조건화)
       - 검사 실패 → 확인된 정보만으로 만든 대체 문장 (status='fallback')
-      - LLM 호출 실패 → "생성 실패" 문구 + 카드 규칙 (status='failed'), 200 반환 (게임 진행에 영향 없음)
+      - LLM 호출 실패 → 기본 문장 + 카드 규칙 (status='failed'), 200 반환 (게임 진행에 영향 없음)
+    (12주차) 응답은 3줄 구조(compose_feedback): 지금 시장 / 이 카드는 / 그래서. LLM은 '그래서' 한 줄만 쓴다.
     """
-    ranked = sorted(req.rankings, key=lambda r: r.rank)
-    header = card_rule_header(ranked[0].cardId) if ranked else ''
-
     try:
         msg = client.messages.create(
             model='claude-sonnet-4-6',
@@ -624,8 +659,7 @@ def generate_feedback(req: V2FeedbackRequest):
     except Exception as e:
         # (v8.0) 빈 문자열 대신 "생성 실패" 상태를 알리고, 카드 규칙은 그대로 보여준다
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
-        failed = '\n'.join(x for x in ['AI 설명을 만들지 못했어요. 카드 규칙만 보여드려요.', header] if x)
-        return V2FeedbackResponse(feedback=failed, verified=None, status='failed')
+        return V2FeedbackResponse(feedback=compose_feedback(req, default_reason(req)), verified=None, status='failed')
 
     # 사용자에게 보내기 전 검사 3가지
     #   1) 규칙 기반 검증기 v3 (조건 %·미포함 카드·무제한 등)
@@ -643,7 +677,7 @@ def generate_feedback(req: V2FeedbackRequest):
     issues += [f'[조건부로 오기재] {x}' for x in unconditional_misdescribed(text)]
 
     if not issues:
-        feedback = '\n\n'.join(x for x in [text, header] if x)   # (12주차) 설명 먼저, 규칙은 아래
+        feedback = compose_feedback(req, ' '.join(text.split()))
         return V2FeedbackResponse(feedback=feedback, verified=True, status='llm')
 
     print('⚠️  LLM 피드백 검사 실패 → 대체 문장으로 응답')

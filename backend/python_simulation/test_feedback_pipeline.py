@@ -107,7 +107,20 @@ def main():
         for line in r['feedback'].split('\n'):
             print(f'  | {line}')
 
-    total = len(CASES) + 1
+    # (12주차) 쉬운 카드 설명이 모든 카드에 있는지 + 응답이 3줄 구조인지
+    missing = [cid for cid in fs.CARD_FACTS if cid not in fs.CARD_EASY]
+    fs.client.messages.create = fake_llm('주식이 계속 떨어질 때 금이 손실을 줄여줄 수 있어요.')
+    with TestClient(fs.app) as c2:
+        r = c2.post('/ai/v2/feedback', json=req([4, 8, 2])).json()
+    heads = [l.split(':')[0] for l in r['feedback'].split('\n')]
+    ok = not missing and heads[:3] == ['지금 시장', '이 카드는', '그래서'] and r['status'] == 'llm'
+    fail += not ok
+    print('=' * 70)
+    print(f"[{'PASS' if ok else 'FAIL'}] 3줄 구조 + 쉬운 카드 설명 (없는 카드: {missing})")
+    for line in r['feedback'].split('\n'):
+        print(f'  | {line}')
+
+    total = len(CASES) + 2
     print('=' * 70)
     print(f'결과: {total - fail}/{total} 통과')
 

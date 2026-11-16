@@ -81,6 +81,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   int get _currentRound1 => _currentRoundIndex + 1;
 
+  // 첫 카드를 고르기 전 (차트를 숨기고 카드 선택만 보여줌)
+  bool get _notStarted => _selectedCardIds.isEmpty;
+
+  // 지금까지 카드를 고른 라운드의 차트 위치 (0부터)
+  Set<int> get _cardIndexes {
+    final rounds = [..._session.cardSelectRounds]..sort();
+    return rounds.take(_selectedCardIds.length).map((r) => r - 1).toSet();
+  }
+
   bool get _showCard {
     if (_cardSelected) return false;
     if (_session.cardSelectRounds.isNotEmpty) {
@@ -232,46 +241,64 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
+
+    // 서버가 보내는 3줄 구조: "지금 시장: …" / "이 카드는: …" / "그래서: …"
+    String? pick(String head) {
+      for (final l in lines) {
+        if (l.startsWith('$head: ')) return l.substring(head.length + 2);
+      }
+      return null;
+    }
+
+    final market = pick('지금 시장');
+    final cardIs = pick('이 카드는');
+    final so     = pick('그래서');
     final ruleLines =
         lines.where((l) => l.startsWith('카드 규칙 · ')).toList();
-    final reason = lines
-        .where((l) =>
-            !l.startsWith('카드 규칙 · ') && !l.startsWith('예측 기여도(실측 아님)'))
-        .join('\n');
+    final structured = market != null || cardIs != null || so != null;
+    // 예전 서버(긴 글 한 덩어리)와도 호환
+    final legacy = structured
+        ? ''
+        : lines.where((l) => !l.startsWith('카드 규칙 · ')).join('\n');
 
     final ranked = [..._lastRankings]..sort((a, b) => a.rank.compareTo(b.rank));
-    final maxAbs = ranked.isEmpty
+    final double maxAbs = ranked.isEmpty
         ? 1.0
         : ranked
             .map((r) => r.contribution.abs())
             .reduce((a, b) => a > b ? a : b)
-            .clamp(0.1, double.infinity);
+            .clamp(0.1, double.infinity)
+            .toDouble();
+    final topCard =
+        ranked.isEmpty ? null : CardInfo.fromId(ranked.first.cardId);
 
     showTossSheet(
       context,
-      title: 'AI는 이 카드를 골랐어요',
+      title: topCard == null
+          ? 'AI는 이 카드를 골랐어요'
+          : 'AI의 선택은\n${topCard.emoji} ${topCard.name}',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ① 예측 순위
-          for (final r in ranked) _buildRankBar(r, maxAbs.toDouble()),
-          const SizedBox(height: 4),
-          const Text('막대는 이 카드가 최종 수익률에 더할 것으로 예측한 값이에요',
-              style: TossText.small),
-
-          // ② 이유
-          if (reason.isNotEmpty) ...[
-            const SizedBox(height: 20),
-            const Text('왜 이렇게 예측했나요?', style: TossText.body2),
-            const SizedBox(height: 6),
-            Text(reason,
+          // ① 왜? — 근거 3줄 (시장·카드는 프로그램이, '그래서'만 AI가 씀)
+          if (market != null) _buildReasonRow('📉', '지금 시장', market),
+          if (cardIs != null)
+            _buildReasonRow(topCard?.emoji ?? '🃏', '이 카드는', cardIs),
+          if (so != null) _buildReasonRow('💡', '그래서', so, highlight: true),
+          if (legacy.isNotEmpty)
+            Text(legacy,
                 style: const TextStyle(
                     fontSize: 16, height: 1.6, color: TossColors.grey800)),
-          ],
 
-          // ③ 카드 규칙 (서버가 CARD_FACTS로 붙인 정확한 문장)
+          // ② 후보 3장 예측 비교
+          const SizedBox(height: 16),
+          const Text('후보 카드 예측 비교', style: TossText.small),
+          const SizedBox(height: 4),
+          for (final r in ranked) _buildRankBar(r, maxAbs),
+
+          // ③ 정확한 카드 규칙
           if (ruleLines.isNotEmpty) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
             InfoBox(
               child: Text(
                 ruleLines.map((l) => l.replaceFirst('카드 규칙 · ', '')).join('\n'),
@@ -285,6 +312,45 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           const Text(
             'AI 예측은 과거 시장으로 학습한 참고용이에요. 처음 보는 시장에서는 틀릴 수 있어요.',
             style: TossText.small,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 근거 한 줄: 아이콘 칸 + 작은 머리말 + 본문
+  Widget _buildReasonRow(String emoji, String head, String body,
+      {bool highlight = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 7),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          EmojiTile(
+            emoji: emoji,
+            size: 40,
+            bg: highlight ? TossColors.blue50 : TossColors.grey100,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(head,
+                    style: TossText.small.copyWith(
+                        color: highlight
+                            ? TossColors.blue600
+                            : TossColors.grey500)),
+                const SizedBox(height: 1),
+                Text(body,
+                    style: TextStyle(
+                        fontSize: 16,
+                        height: 1.4,
+                        fontWeight:
+                            highlight ? FontWeight.w700 : FontWeight.w500,
+                        color: TossColors.grey900)),
+              ],
+            ),
           ),
         ],
       ),
@@ -740,17 +806,70 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   color: TossColors.rate(rate),
                   fontFeatures: const [FontFeature.tabularFigures()]),
             ),
-          const SizedBox(height: 12),
-          AnimatedContainer(
-            duration: TossMotion.base,
+          // (12주차) 첫 카드를 고르기 전에는 차트 없이 심플하게. 고르면 차트가 펼쳐짐
+          AnimatedSize(
+            duration: TossMotion.slow,
             curve: TossMotion.enter,
-            height: _showCard ? 130 : 190,
-            child: StockChart(
-              rounds:       _chartData,
-              initialAsset: initial,
-            ),
+            alignment: Alignment.topCenter,
+            child: _notStarted
+                ? const SizedBox(width: double.infinity)
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildTriggerNotice(),
+                      AnimatedContainer(
+                        duration: TossMotion.base,
+                        curve: TossMotion.enter,
+                        height: _showCard ? 130 : 190,
+                        child: StockChart(
+                          rounds:       _chartData,
+                          initialAsset: initial,
+                          cardIndexes:  _cardIndexes,
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── 카드 발동 알림 (자동 매매가 일어난 라운드에 잠깐 표시) ──
+  // 높이를 고정해 알림이 뜨고 사라져도 차트가 흔들리지 않게 함
+  Widget _buildTriggerNotice() {
+    final names = _triggeredCardIds
+        .map((id) => CardInfo.fromId(id))
+        .whereType<CardInfo>()
+        .map((c) => '${c.emoji} ${c.name}')
+        .join(' · ');
+    return SizedBox(
+      height: 34,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: AnimatedSwitcher(
+          duration: TossMotion.fast,
+          child: names.isEmpty
+              ? const SizedBox.shrink()
+              : Container(
+                  key: ValueKey(names),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF3E0),
+                    borderRadius: BorderRadius.circular(TossRadius.sm),
+                  ),
+                  child: Text(
+                    '$names 발동',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFFC25E00)),
+                  ),
+                ),
+        ),
       ),
     );
   }
@@ -764,8 +883,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         children: [
           Row(
             children: [
-              const Expanded(
-                child: Text('이번 라운드 전략을\n골라주세요',
+              Expanded(
+                child: Text(
+                    _notStarted
+                        ? '첫 전략을\n골라주세요'
+                        : '이번 라운드 전략을\n골라주세요',
                     style: TossText.title3),
               ),
               // AI 설명·AI 예측 버튼: 25·50라운드만 표시
