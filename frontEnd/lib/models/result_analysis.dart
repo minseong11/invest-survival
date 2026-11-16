@@ -90,22 +90,132 @@ class PlayerAnalysisResult extends ComboResult {
   }
 }
 
+// =============================================
+// (11주차) 받은 후보 안 분석 — offeredAnalysis
+// 라운드마다 실제로 제시된 3장만으로 만들 수 있는 조합(최대 81개) 기준
+// =============================================
+
+// 이 라운드만 다른 후보로 바꿨을 때 (나머지 라운드 선택은 그대로)
+class RoundAlternative {
+  final int cardId;
+  final String cardName;
+  final double finalReturnRate;
+  final double diffReturnRate; // 대안 - 내 결과 (%p, +면 대안이 더 좋았음)
+
+  RoundAlternative({
+    required this.cardId,
+    required this.cardName,
+    required this.finalReturnRate,
+    required this.diffReturnRate,
+  });
+
+  factory RoundAlternative.fromJson(Map<String, dynamic> json) {
+    return RoundAlternative(
+      cardId:          (json['cardId'] as num).toInt(),
+      cardName:        (json['cardName'] as String?) ?? '',
+      finalReturnRate: (json['finalReturnRate'] as num).toDouble(),
+      diffReturnRate:  (json['diffReturnRate'] as num).toDouble(),
+    );
+  }
+}
+
+class RoundAlternatives {
+  final int round;
+  final List<int> offeredCards;
+  final int playerCardId;
+  final List<RoundAlternative> alternatives; // 최종 자산 높은 순
+
+  RoundAlternatives({
+    required this.round,
+    required this.offeredCards,
+    required this.playerCardId,
+    required this.alternatives,
+  });
+
+  factory RoundAlternatives.fromJson(Map<String, dynamic> json) {
+    return RoundAlternatives(
+      round:        (json['round'] as num).toInt(),
+      offeredCards: ((json['offeredCards'] as List<dynamic>?) ?? [])
+          .map((e) => (e as num).toInt())
+          .toList(),
+      playerCardId: (json['playerCardId'] as num).toInt(),
+      alternatives: ((json['alternatives'] as List<dynamic>?) ?? [])
+          .map((e) => RoundAlternative.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  // 내 선택보다 더 좋았던 대안 중 최고 (없으면 null → 내 선택이 이 라운드 최선)
+  RoundAlternative? get better {
+    if (alternatives.isEmpty) return null;
+    final top = alternatives.reduce(
+        (a, b) => a.diffReturnRate >= b.diffReturnRate ? a : b);
+    return top.diffReturnRate > 0 ? top : null;
+  }
+}
+
+class OfferedAnalysis {
+  final int totalCombinations;
+  final ComboResult bestCombo;
+  final PlayerAnalysisResult playerResult;
+  final List<RoundAlternatives> roundAlternatives;
+
+  OfferedAnalysis({
+    required this.totalCombinations,
+    required this.bestCombo,
+    required this.playerResult,
+    required this.roundAlternatives,
+  });
+
+  factory OfferedAnalysis.fromJson(Map<String, dynamic> json) {
+    final total = (json['totalCombinations'] as num).toInt();
+    return OfferedAnalysis(
+      totalCombinations: total,
+      bestCombo: ComboResult.fromJson(json['bestCombo'] as Map<String, dynamic>),
+      playerResult: PlayerAnalysisResult.fromJson(
+          json['playerResult'] as Map<String, dynamic>, total),
+      roundAlternatives: ((json['roundAlternatives'] as List<dynamic>?) ?? [])
+          .map((e) => RoundAlternatives.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  RoundAlternatives? roundAt(int round) {
+    for (final r in roundAlternatives) {
+      if (r.round == round) return r;
+    }
+    return null;
+  }
+}
+
 class ResultAnalysis {
   final int totalCombinations;
   final List<ComboResult> topCombos;
   final PlayerAnalysisResult playerResult;
   final int cardPoolSize; // 이 시나리오에서 사용 가능한 카드 수 (#87: 닷컴은 상장 전 종목 제외로 9장)
+  final OfferedAnalysis? offered; // 받은 후보 안 분석 (없거나 형식이 다르면 null)
 
   ResultAnalysis({
     required this.totalCombinations,
     required this.topCombos,
     required this.playerResult,
     this.cardPoolSize = 11,
+    this.offered,
   });
 
   factory ResultAnalysis.fromJson(Map<String, dynamic> json) {
     final total = (json['totalCombinations'] as num).toInt();
     final list  = (json['topCombos'] as List<dynamic>?) ?? [];
+
+    // 후보 안 분석은 실패해도 나머지 결과는 그대로 보여준다
+    OfferedAnalysis? offered;
+    try {
+      final raw = json['offeredAnalysis'];
+      if (raw is Map<String, dynamic>) offered = OfferedAnalysis.fromJson(raw);
+    } catch (_) {
+      offered = null;
+    }
+
     return ResultAnalysis(
       totalCombinations: total,
       topCombos: list
@@ -114,6 +224,7 @@ class ResultAnalysis {
       playerResult: PlayerAnalysisResult.fromJson(
           json['playerResult'] as Map<String, dynamic>, total),
       cardPoolSize: (json['cardPoolSize'] as num?)?.toInt() ?? 11,
+      offered: offered,
     );
   }
 
