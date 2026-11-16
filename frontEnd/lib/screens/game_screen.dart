@@ -5,9 +5,12 @@ import '../models/game_session.dart';
 import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
+import '../models/decision.dart';
 import '../models/news_item.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
+import '../widgets/briefing_card.dart';
+import '../widgets/decision_selector.dart';
 import '../widgets/stock_chart.dart';
 import '../widgets/holdings_widget.dart';
 import '../widgets/news_banner.dart';
@@ -19,20 +22,24 @@ enum AiState { idle, loading, done, error }
 
 class GameScreen extends StatefulWidget {
   final GameSession session;
-  const GameScreen({super.key, required this.session});
+  // 테스트에서 가짜 서버를 넣을 수 있게 (없으면 실제 서버)
+  final GameService? service;
+  const GameScreen({super.key, required this.session, this.service});
 
   @override
   State<GameScreen> createState() => _GameScreenState();
 }
 
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
-  final GameService _gameService = GameService();
+  late final GameService _gameService = widget.service ?? GameService();
 
   late GameSession _session;
   int  _currentRoundIndex = 0;
-  bool _cardSelected      = false;
+  // 지금 라운드가 이벤트 라운드(카드 선택·위기 대응)일 때, 그 선택을 마쳤는지
+  bool _eventDone         = false;
   bool _isSubmitting      = false;
   bool _isAutoPlaying     = false;
+  int  _speed             = 1;     // (#125) 자동 진행 배속 (1·2·4)
 
   List<int> _currentCardOptions = [];
 
@@ -48,13 +55,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   int?             _v2RecommendedCardId;
   Map<int, double> _contributions       = {};
   String           _aiFeedback          = ''; // LLM 자연어 피드백
-  bool             _isFeedbackLoading   = false; // 피드백 버튼 자체 로딩
   List<CardRanking> _lastRankings       = []; // 피드백 요청 시 재사용
   bool             _aiRequested         = false;
 
   // 라운드별 AI 예측 1순위 (결과 화면에서 '내 선택'과 비교)
   final Map<int, int> _aiPicks = {};
-  final Map<int, List<int>> _aiCandidates = {}; // 그때 받은 후보 카드 3장
 
   // (11주차) 뉴스 배너 — 화면 위에 겹쳐 띄워 기존 배치를 건드리지 않음
   List<NewsItem> _pendingSelectNews = [];   // 다음 카드 선택 라운드 뉴스 (nextRoundNews)
@@ -69,6 +74,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // 카드 선택 화면에서 고른 카드 (확정 버튼을 눌러야 제출)
   int? _pendingCardId;
+
+  // (#125) 위기 대응
+  DecisionPrompt? _decisionPrompt;          // 다음 위기 대응 라운드의 속보 (서버 nextDecision)
+  String? _pendingChoice;                   // 고른 대응 (확정 버튼을 눌러야 제출)
+  final Map<int, String> _decisions = {};   // 라운드 → 내가 한 대응 (차트 표시용)
+
+  // (#125) 카드가 건너뛴 이유는 같은 이유로 처음 건너뛸 때만 알린다 (매 라운드 알리면 계속 떠 있음)
+  final Set<String> _announcedSkips = {};
+  String _skipNotice = '';
 
   // ── Getters ────────────────────────────────
   RoundData get _currentRound {
@@ -90,20 +104,34 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     return rounds.take(_selectedCardIds.length).map((r) => r - 1).toSet();
   }
 
-  bool get _showCard {
-    if (_cardSelected) return false;
-    if (_session.cardSelectRounds.isNotEmpty) {
-      return _session.isCardSelectRound(_currentRound1);
-    }
-    return _currentRound1 == 1;
-  }
+  bool get _atCardRound => _session.cardSelectRounds.isNotEmpty
+      ? _session.isCardSelectRound(_currentRound1)
+      : _currentRound1 == 1;
+
+  // 카드를 골라야 하는 상태
+  bool get _showCard => !_eventDone && _atCardRound;
+
+  // (#125) 위기 대응을 골라야 하는 상태
+  bool get _showDecision =>
+      !_eventDone && !_atCardRound && _session.isDecisionRound(_currentRound1);
+
+  // 플레이어의 선택을 기다리는 중 (자동 진행이 멈춰 있음)
+  bool get _waiting => _showCard || _showDecision;
 
   bool get _isLastRound {
-    if (!_cardSelected) return false;
+    if (_waiting) return false;
     final next = _currentRoundIndex + 2;
-    if (_session.isCardSelectRound(next)) return false;
+    if (_session.isEventRound(next)) return false;
     return _currentRoundIndex >= _session.rounds.length - 1;
   }
+
+  // 지금 화면에 보이는 라운드에서 가진 자산이 있는지 / 현금이 남았는지 (위기 대응 선택지를 막을 때 사용)
+  bool get _hasHoldings => _currentRound.holdings.isNotEmpty;
+  bool get _hasCash => (_currentRound.cash ?? _session.initialAsset) > 0;
+  bool get _holdsSpx => _currentRound.holdings.any((h) => h.ticker == '^SPX');
+
+  // 위기 대응을 한 라운드의 차트 위치 (0부터)
+  Set<int> get _decisionIndexes => _decisions.keys.map((r) => r - 1).toSet();
 
   // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
@@ -113,7 +141,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   //  - 75라운드: 남은 라운드가 적어 카드 간 결과 차이가 작음
   String? get _noAiReason {
     if (_currentRound1 == 1) {
-      return '아직 시장 데이터가 없어 이 라운드는 AI 예측을 제공하지 않아요';
+      return 'AI 예측은 게임 중 시장 흐름이 쌓이는 25·50라운드에 나와요. '
+          '지금은 위의 시작 전 브리핑을 참고하세요';
     }
     if (_currentRound1 == 75) {
       return '남은 라운드가 적어 카드 간 결과 차이가 작기 때문에 AI 예측을 제공하지 않아요';
@@ -126,12 +155,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (!_aiRequested || _aiState != AiState.done) return null;
     return _v2RecommendedCardId;
   }
-
-  // 지금 보고 있는 라운드 데이터 (보유 자산 표시용)
-  RoundData? get _currentRoundData =>
-      _currentRoundIndex < _session.rounds.length
-          ? _session.rounds[_currentRoundIndex]
-          : null;
 
   // 보유카드 데이터
   List<HoldingCardInfo> get _holdingCards => extractHoldingCards(
@@ -175,7 +198,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _aiState             = AiState.loading;
       _v2RecommendedCardId = null;
       _contributions       = {};
-      _aiFeedback           = '';
+      _aiFeedback          = '';
     });
 
     try {
@@ -193,7 +216,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       setState(() {
         _v2RecommendedCardId = result.recommendedCardId;
         _aiPicks[_currentRound1] = result.recommendedCardId;
-        _aiCandidates[_currentRound1] = List.from(_currentCardOptions);
         _contributions       = contribs;
         _lastRankings        = result.rankings;
         _aiFeedback          = result.feedback; // v5.0: recommend 응답에 함께 포함
@@ -211,9 +233,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _v2RecommendedCardId = null;
     _contributions       = {};
     _aiFeedback          = '';
-    _isFeedbackLoading   = false;
     _lastRankings        = [];
     _pendingCardId       = null;
+    _pendingChoice       = null;
   }
 
   // =============================================
@@ -295,6 +317,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           const Text('후보 카드 예측 비교', style: TossText.small),
           const SizedBox(height: 4),
           for (final r in ranked) _buildRankBar(r, maxAbs),
+          const SizedBox(height: 4),
+          // (#125) 이 숫자는 최종 수익률 예측이 아니라 후보 평균과의 차이
+          const Text(
+            '숫자는 후보 3장의 평균과 비교한 예상 차이(%p)예요. 최종 수익률을 예측한 값이 아니에요.',
+            style: TossText.small,
+          ),
 
           // ③ 정확한 카드 규칙
           if (ruleLines.isNotEmpty) ...[
@@ -310,7 +338,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           // ④ 참고용 안내 (평가 결과 반영)
           const SizedBox(height: 12),
           const Text(
-            'AI 예측은 과거 시장으로 학습한 참고용이에요. 처음 보는 시장에서는 틀릴 수 있어요.',
+            'AI 예측은 과거 시장으로 학습한 참고용이에요. S&P500의 흐름과 고른 카드만 보고 판단하고, '
+            '처음 보는 시장에서는 틀릴 수 있어요.',
             style: TossText.small,
           ),
         ],
@@ -368,7 +397,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       child: Row(
         children: [
           SizedBox(
-            width: 128,
+            width: 116,
             child: Row(
               children: [
                 Text(card?.emoji ?? '🃏', style: const TextStyle(fontSize: 16)),
@@ -388,26 +417,50 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             ),
           ),
           const SizedBox(width: 8),
+          // (#125) 가운데 기준선(후보 평균)에서 +는 오른쪽, -는 왼쪽으로 뻗는다
+          //        (기존에는 절댓값 길이라 -0.4%가 +0.3%보다 길게 보였다)
           Expanded(
             child: LayoutBuilder(
-              builder: (_, c) => Align(
-                alignment: Alignment.centerLeft,
-                child: Container(
-                  height: 10,
-                  width: (c.maxWidth * ratio).clamp(4.0, c.maxWidth).toDouble(),
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(5),
+              builder: (_, c) {
+                final half = c.maxWidth / 2;
+                final len  = (half * ratio).clamp(2.0, half).toDouble();
+                final up   = r.contribution >= 0;
+                return SizedBox(
+                  height: 14,
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: half - 0.5,
+                        top: 0,
+                        bottom: 0,
+                        child: Container(width: 1, color: TossColors.grey300),
+                      ),
+                      Positioned(
+                        left: up ? half : half - len,
+                        top: 2,
+                        child: Container(
+                          height: 10,
+                          width: len,
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.horizontal(
+                              left: Radius.circular(up ? 0 : 5),
+                              right: Radius.circular(up ? 5 : 0),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
           const SizedBox(width: 8),
           SizedBox(
-            width: 52,
+            width: 58,
             child: Text(
-              '${r.contribution >= 0 ? '+' : ''}${r.contribution.toStringAsFixed(1)}%',
+              formatSigned(r.contribution, unit: '%p'),
               textAlign: TextAlign.right,
               style: TossText.number.copyWith(
                   fontSize: 14, color: TossColors.rate(r.contribution)),
@@ -425,15 +478,33 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void _onRoundEntered() {
     final roundNews =
         _session.getRound(_currentRoundIndex)?.news ?? const <NewsItem>[];
-    final sticky = _showCard;
+    final sticky = _waiting;
     final items  = [...roundNews, if (sticky) ..._pendingSelectNews];
     if (sticky) {
-      // 카드 선택 라운드: 뉴스는 위에서 띄우지 않고 카드 선택 섹션 안에 고정
+      // 선택 라운드: 뉴스는 위에서 띄우지 않고 선택 섹션 안에 고정
+      // (위기 대응 라운드의 속보는 제목 아래에 크게 따로 보여주므로 목록에서는 뺀다)
       final seen = <String>{};
-      setState(() =>
-          _selectNews = items.where((n) => seen.add(n.key)).toList());
+      final promptKey = _showDecision ? _decisionPrompt?.news.key : null;
+      setState(() => _selectNews = items
+          .where((n) => n.key != promptKey && seen.add(n.key))
+          .toList());
     }
     _showNews(items, sticky: sticky);
+    _updateSkipNotice();
+  }
+
+  // (#125) 이번 라운드에 조건은 맞았지만 실행되지 못한 카드 → 같은 이유로는 처음 한 번만 알림
+  void _updateSkipNotice() {
+    final round = _session.getRound(_currentRoundIndex);
+    final fresh = <String>[];
+    for (final s in round?.skippedCards ?? const <SkippedCard>[]) {
+      if (!_announcedSkips.add('${s.cardId}|${s.reason}')) continue;
+      final card = CardInfo.fromId(s.cardId);
+      if (card == null) continue;
+      fresh.add('${card.emoji} ${card.name} 쉼 · ${SkippedCard.label(s.reason)}');
+    }
+    final notice = fresh.join('  ');
+    if (notice != _skipNotice) setState(() => _skipNotice = notice);
   }
 
   void _showNews(List<NewsItem> items, {required bool sticky}) {
@@ -473,16 +544,17 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _autoTimer?.cancel();
     if (_isLastRound) return;
     setState(() => _isAutoPlaying = true);
-    _autoTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
+    _autoTimer = Timer.periodic(Duration(milliseconds: 500 ~/ _speed), (_) {
       if (!mounted) return;
-      final next        = _currentRoundIndex + 2;
-      final willHitCard = _session.isCardSelectRound(next);
-      if (_isLastRound || willHitCard) {
+      final next         = _currentRoundIndex + 2;
+      // 다음 라운드가 카드 선택·위기 대응 라운드면 멈추고 선택을 기다린다
+      final willHitEvent = _session.isEventRound(next);
+      if (_isLastRound || willHitEvent) {
         _stopAutoPlay();
         if (!_isLastRound) {
           setState(() {
             _currentRoundIndex++;
-            _cardSelected    = false;
+            _eventDone        = false;
             _triggeredCardIds = [];
             _resetAiState();
           });
@@ -505,6 +577,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (mounted) setState(() => _isAutoPlaying = false);
   }
 
+  // (#125) 배속 바꾸기: 1 → 2 → 4 → 1. 진행 중이면 새 속도로 이어서 진행
+  void _cycleSpeed() {
+    setState(() => _speed = _speed >= 4 ? 1 : _speed * 2);
+    if (_isAutoPlaying) _startAutoPlay();
+  }
+
   void _goToResult() {
     _stopAutoPlay();
     Navigator.pushReplacement(
@@ -513,7 +591,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           builder: (_) => GameResultScreen(
                 session: _session,
                 aiPicks: Map<int, int>.from(_aiPicks),
-                aiCandidates: Map<int, List<int>>.from(_aiCandidates),
+                service: widget.service,
               )),
     );
   }
@@ -531,7 +609,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       );
       if (!mounted) return;
       HapticFeedback.mediumImpact();
-      _applyActionResult(result, cardId);
+      _applyActionResult(result, selectedCardId: cardId);
     } catch (e) {
       if (!mounted) return;
       showTossToast(context, e.toString());
@@ -540,7 +618,31 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-  void _applyActionResult(ActionResult result, int selectedCardId) {
+  // (#125) 위기 대응 확정
+  Future<void> _onDecisionSelected(String choice) async {
+    final round = _currentRound1;
+    setState(() => _isSubmitting = true);
+    try {
+      final result = await _gameService.submitDecision(
+        sessionId: _session.sessionId,
+        round:     round,
+        choice:    choice,
+      );
+      if (!mounted) return;
+      HapticFeedback.mediumImpact();
+      _decisions[round] = choice;
+      _applyActionResult(result);
+      showTossToast(context, DecisionChoice.done(choice));
+    } catch (e) {
+      if (!mounted) return;
+      showTossToast(context, e.toString());
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
+    }
+  }
+
+  // 카드 선택·위기 대응 응답을 화면 상태에 합친다 (selectedCardId: 카드 선택일 때만)
+  void _applyActionResult(ActionResult result, {int? selectedCardId}) {
     final updatedRounds = List<RoundData>.from(_session.rounds);
     for (final newRound in result.rounds) {
       final index = newRound.round - 1;
@@ -554,34 +656,30 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       }
     }
     setState(() {
-      _session = GameSession(
-        sessionId:        _session.sessionId,
-        scenarioTitle:    _session.scenarioTitle,
-        totalRounds:      _session.totalRounds,
-        initialAsset:     _session.initialAsset,
-        cardSelectRounds: _session.cardSelectRounds,
-        firstCardOptions: _session.firstCardOptions,
-        rounds:           updatedRounds,
-      );
-      _cardSelected       = true;
+      _session            = _session.copyWithRounds(updatedRounds);
+      _eventDone          = true;
       _currentCardOptions = result.nextCardOptions;
       _pendingSelectNews  = result.nextRoundNews;
+      _decisionPrompt     = result.nextDecision;
       _selectNews         = [];
-      // 카드를 골랐으니 선택용 배너는 닫음
+      // 골랐으니 선택용 배너는 닫음
       if (_bannerSticky) {
         _bannerNews   = null;
         _bannerSticky = false;
       }
 
       // 선택한 카드 누적
-      if (!_selectedCardIds.contains(selectedCardId)) {
-        _selectedCardIds.add(selectedCardId);
+      if (selectedCardId != null) {
+        if (!_selectedCardIds.contains(selectedCardId)) {
+          _selectedCardIds.add(selectedCardId);
+        }
+        _lastAddedCardId = selectedCardId;
       }
-      _lastAddedCardId  = selectedCardId;
       _triggeredCardIds = [];
       _resetAiState();
     });
-    // (12주차) 카드를 고르면 재생 버튼을 누르지 않아도 바로 다음 라운드로 진행
+    _updateSkipNotice();
+    // (12주차) 고르면 재생 버튼을 누르지 않아도 바로 다음 라운드로 진행
     _startAutoPlay();
   }
 
@@ -611,25 +709,50 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildSummary(),
+                    // (#125) 첫 카드를 고르기 전: 시작 전 시장 브리핑
+                    if (_notStarted &&
+                        _session.briefing != null &&
+                        !_session.briefing!.isEmpty) ...[
+                      const SizedBox(height: 8),
+                      FadeInUp(
+                          child: BriefingCard(briefing: _session.briefing!)),
+                    ],
                     if (_selectedCardIds.isNotEmpty) ...[
                       const SizedBox(height: 8),
+                      // (#125) 선택 라운드에서는 아직 그 라운드 데이터가 없어 직전 라운드의 보유 자산을 보여준다
+                      //        (기존에는 선택 라운드마다 보유 자산 칸이 사라졌다)
                       HoldingCardsWidget(
                         cards:            _holdingCards,
                         triggeredCardIds: _triggeredCardIds,
-                        holdings:         _currentRoundData?.holdings ?? const [],
-                        cashWeight:       _currentRoundData?.cashWeight,
+                        holdings:         _currentRound.holdings,
+                        cashWeight:       _currentRound.cashWeight,
                       ),
                     ],
                     AnimatedSize(
                       duration: TossMotion.base,
                       curve: TossMotion.enter,
                       alignment: Alignment.topCenter,
-                      child: _showCard
+                      child: _waiting
                           ? Padding(
                               padding: const EdgeInsets.only(top: 8),
                               child: FadeInUp(
                                 key: ValueKey('selector-$_currentRound1'),
-                                child: _buildCardSelector(),
+                                child: _showCard
+                                    ? _buildCardSelector()
+                                    : DecisionSelector(
+                                        prompt: _decisionPrompt?.round ==
+                                                _currentRound1
+                                            ? _decisionPrompt
+                                            : null,
+                                        otherNews:     _selectNews,
+                                        selected:      _pendingChoice,
+                                        hasHoldings:   _hasHoldings,
+                                        hasCash:       _hasCash,
+                                        buyMoreTarget: _session.buyMoreTarget,
+                                        enabled:       !_isSubmitting,
+                                        onSelect: (c) =>
+                                            setState(() => _pendingChoice = c),
+                                      ),
                               ),
                             )
                           : const SizedBox(width: double.infinity),
@@ -729,6 +852,28 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 ),
                 const SizedBox(width: 10),
               ],
+              // (#125) 자동 진행 배속
+              if (!_notStarted) ...[
+                Pressable(
+                  onTap: _cycleSpeed,
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: _speed > 1 ? TossColors.blue50 : TossColors.grey200,
+                      borderRadius: BorderRadius.circular(TossRadius.sm),
+                    ),
+                    child: Text('×$_speed',
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _speed > 1
+                                ? TossColors.blue600
+                                : TossColors.grey700)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+              ],
               Text('$_currentRound1',
                   style: const TextStyle(
                       fontSize: 15,
@@ -796,9 +941,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     fontWeight: FontWeight.w500,
                     color: TossColors.grey500))
           else
+            // (#125) 퍼센트에도 부호를 붙인다 (기존: 손실일 때 "(20.95%)"로 표시)
             RollingText(
               '${diff >= 0 ? '+' : '-'}${formatWon(diff.abs())}원 '
-              '(${rate.abs().toStringAsFixed(2)}%)',
+              '(${formatSigned(rate, digits: 2)})',
               value: asset,
               style: TextStyle(
                   fontSize: 15,
@@ -820,11 +966,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       AnimatedContainer(
                         duration: TossMotion.base,
                         curve: TossMotion.enter,
-                        height: _showCard ? 130 : 190,
+                        height: _waiting ? 130 : 190,
                         child: StockChart(
-                          rounds:       _chartData,
-                          initialAsset: initial,
-                          cardIndexes:  _cardIndexes,
+                          rounds:          _chartData,
+                          initialAsset:    initial,
+                          cardIndexes:     _cardIndexes,
+                          decisionIndexes: _decisionIndexes,
                         ),
                       ),
                     ],
@@ -843,30 +990,35 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         .whereType<CardInfo>()
         .map((c) => '${c.emoji} ${c.name}')
         .join(' · ');
+    // (#125) 발동한 카드가 없고 처음 건너뛴 카드가 있으면 그 이유를 회색으로 알림
+    final text  = names.isNotEmpty ? '$names 발동' : _skipNotice;
+    final fired = names.isNotEmpty;
     return SizedBox(
       height: 34,
       child: Align(
         alignment: Alignment.centerLeft,
         child: AnimatedSwitcher(
           duration: TossMotion.fast,
-          child: names.isEmpty
+          child: text.isEmpty
               ? const SizedBox.shrink()
               : Container(
-                  key: ValueKey(names),
+                  key: ValueKey(text),
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF3E0),
+                    color: fired ? const Color(0xFFFFF3E0) : TossColors.grey100,
                     borderRadius: BorderRadius.circular(TossRadius.sm),
                   ),
                   child: Text(
-                    '$names 발동',
+                    text,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFFC25E00)),
+                        color: fired
+                            ? const Color(0xFFC25E00)
+                            : TossColors.grey600),
                   ),
                 ),
         ),
@@ -1089,10 +1241,20 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 2),
                   Text(card.description.replaceAll('\n', ' '),
                       style: TossText.caption),
+                  // (#125) 팔 S&P500이 없으면 이 카드는 발동해도 아무 일도 일어나지 않는다
+                  if (card.id == 8 && !_holdsSpx) ...[
+                    const SizedBox(height: 3),
+                    const Text('지금은 가진 S&P500이 없어요. S&P500을 사는 카드와 함께 쓸 때 효과가 있어요',
+                        style: TextStyle(
+                            fontSize: 12,
+                            height: 1.4,
+                            color: Color(0xFFC25E00))),
+                  ],
                   if (showContrib) ...[
                     const SizedBox(height: 4),
+                    // (#125) 이 값은 기대수익률이 아니라 후보 3장 평균과의 예상 차이(%p)
                     Text(
-                      '예측 ${contribution >= 0 ? '+' : ''}${contribution.toStringAsFixed(1)}%',
+                      'AI 예측: 후보 평균보다 ${formatSigned(contribution, unit: '%p')}',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
@@ -1128,7 +1290,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     return Container(
       color: TossColors.background,
       padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
-      child: _showCard ? _buildConfirmButton() : _buildControls(),
+      child: _showCard
+          ? _buildConfirmButton()
+          : _showDecision
+              ? _buildDecisionButton()
+              : _buildControls(),
+    );
+  }
+
+  // (#125) 위기 대응 확정
+  Widget _buildDecisionButton() {
+    final picked = _pendingChoice;
+    return TossButton(
+      label: picked == null ? '대응을 골라주세요' : '이렇게 할게요',
+      loading: _isSubmitting,
+      onTap: picked == null ? null : () => _onDecisionSelected(picked),
     );
   }
 

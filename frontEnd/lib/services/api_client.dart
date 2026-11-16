@@ -11,16 +11,17 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  //static const String _baseUrl = 'http://172.22.165.231:8080';
-  //static const String _baseUrl = 'http://172.18.16.192:8080';
-  //static const String _baseUrl = 'http://172.18.81.118:8080';정민기
-  //static const String _baseUrl = 'http://172.18.107.48:8080';
-    static const String _baseUrl = 'http://localhost:8080';
-
-  
+  // (#125) 게임 서버 주소는 실행·빌드할 때 지정한다 (코드를 고치지 않음)
+  //   flutter run --dart-define=API_BASE_URL=http://192.168.0.10:8080
+  //   지정하지 않으면 같은 PC의 서버(http://localhost:8080)
+  //   ※ 안드로이드 에뮬레이터에서 PC의 서버에 붙을 때는 http://10.0.2.2:8080
+  static const String baseUrl = String.fromEnvironment(
+    'API_BASE_URL',
+    defaultValue: 'http://localhost:8080',
+  );
 
   final Dio _dio = Dio(BaseOptions(
-    baseUrl: _baseUrl,
+    baseUrl: baseUrl,
     connectTimeout: const Duration(seconds: 5),
     receiveTimeout: const Duration(seconds: 5),
   ));

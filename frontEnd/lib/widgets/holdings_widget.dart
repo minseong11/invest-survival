@@ -19,6 +19,9 @@ class HoldingCardInfo {
   final double currentChangeRate;
   final bool isNew;
   final int triggerCount; // 지금 라운드까지 발동한 횟수 (11주차)
+  // (#125) 발동 조건은 맞았지만 실행되지 못한 횟수와 가장 잦은 이유
+  final int skipCount;
+  final String? skipReason;
 
   HoldingCardInfo({
     required this.cardId,
@@ -28,9 +31,19 @@ class HoldingCardInfo {
     required this.currentChangeRate,
     this.isNew = false,
     this.triggerCount = 0,
+    this.skipCount = 0,
+    this.skipReason,
   });
 
   bool get isOnce => kOnceCardIds.contains(cardId);
+
+  // 카드 칩 둘째 줄: "발동 13회" / "발동 0회 · 현금 부족 5번" / "즉시 매수"
+  String get statusLabel {
+    if (isOnce) return '즉시 매수';
+    final base = '발동 $triggerCount회';
+    if (skipCount == 0 || skipReason == null) return base;
+    return '$base · ${SkippedCard.label(skipReason!)} $skipCount번';
+  }
 }
 
 // 선택된 카드 목록에서 보유 카드 추출
@@ -44,10 +57,16 @@ List<HoldingCardInfo> extractHoldingCards({
   final holdings = <HoldingCardInfo>[];
 
   // 지금 라운드까지 카드별 발동 횟수 (rounds[].triggeredCards 누적)
+  // (#125) + 건너뛴 횟수 (rounds[].skippedCards 누적, 이유별)
   final counts = <int, int>{};
+  final skips = <int, Map<String, int>>{};
   for (int i = 0; i <= currentRoundIndex && i < rounds.length; i++) {
     for (final id in rounds[i].triggeredCards) {
       counts[id] = (counts[id] ?? 0) + 1;
+    }
+    for (final s in rounds[i].skippedCards) {
+      final byReason = skips.putIfAbsent(s.cardId, () => {});
+      byReason[s.reason] = (byReason[s.reason] ?? 0) + 1;
     }
   }
 
@@ -69,6 +88,15 @@ List<HoldingCardInfo> extractHoldingCards({
       currentChangeRate: changeRate,
       isNew:             cardId == newCardId,
       triggerCount:      counts[cardId] ?? 0,
+      skipCount:         (skips[cardId] ?? const {})
+          .values
+          .fold(0, (a, b) => a + b),
+      skipReason:        (skips[cardId] ?? const {}).isEmpty
+          ? null
+          : skips[cardId]!
+              .entries
+              .reduce((a, b) => a.value >= b.value ? a : b)
+              .key,
     ));
   }
 
@@ -320,10 +348,6 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
 
   @override
   Widget build(BuildContext context) {
-    final label = widget.card.isOnce
-        ? '즉시 매수'
-        : '발동 ${widget.card.triggerCount}회';
-
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, child) {
@@ -345,28 +369,39 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
           ),
         );
       },
+      // (#125) 두 줄: 이름 / 발동 횟수 + 건너뛴 이유 (한 줄에 다 넣으면 이름이 잘렸다)
       child: Row(
         children: [
-          Text(widget.card.emoji, style: const TextStyle(fontSize: 16)),
-          const SizedBox(width: 6),
+          Text(widget.card.emoji, style: const TextStyle(fontSize: 18)),
+          const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              widget.card.cardName,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: TossColors.grey800,
-              ),
-            ),
-          ),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: TossColors.grey500,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.card.cardName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: TossColors.grey800,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  widget.card.statusLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w500,
+                    color: widget.card.skipCount > 0
+                        ? const Color(0xFFC25E00)
+                        : TossColors.grey500,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

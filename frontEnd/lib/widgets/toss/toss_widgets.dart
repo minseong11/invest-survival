@@ -435,6 +435,30 @@ String formatWon(double value) {
 
 String formatRate(double v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(2)}%';
 
+// (#125) 부호를 항상 붙인 퍼센트: +12.3% / -4.5% (digits: 소수 자릿수, unit: '%' 또는 '%p')
+//   손실일 때 "(20.95%)"처럼 부호가 빠져 수익처럼 읽히던 문제를 막기 위해 한곳에서 만든다
+String formatSigned(double v, {int digits = 1, String unit = '%'}) {
+  final text = v.abs().toStringAsFixed(digits);
+  final zero = double.parse(text) == 0;
+  return '${zero ? '' : (v > 0 ? '+' : '-')}$text$unit';
+}
+
+// (#125) 금액을 짧게: 3,000,000 → "300만원", 12,340,000 → "1,234만원", 8,332 → "8,332원"
+String formatShortWon(double value) {
+  final v = value.abs();
+  if (v >= 10000) return '${formatWon((v / 10000).floorToDouble())}만원';
+  return '${formatWon(v)}원';
+}
+
+// (#125) 전체 조합 중 내 위치. 절반보다 위면 "상위 n%", 아래면 "하위 n%"
+//   (기존에는 하위권도 "상위 87.9%"로 표시됐다)
+String formatRankPosition(double topPercent) {
+  if (topPercent < 0.1) return '상위 0.1% 이내';
+  if (topPercent <= 50) return '상위 ${topPercent.toStringAsFixed(1)}%';
+  final bottom = 100 - topPercent;
+  return bottom < 0.1 ? '하위 0.1% 이내' : '하위 ${bottom.toStringAsFixed(1)}%';
+}
+
 void showTossToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()

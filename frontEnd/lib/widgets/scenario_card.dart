@@ -4,7 +4,7 @@ import '../theme/toss_theme.dart';
 import 'toss/toss_widgets.dart';
 
 // 시나리오 한 줄 (토스 ListRow 스타일)
-//  왼쪽: 서버가 준 colorHex 타일에 연도 / 가운데: 제목·난이도 / 오른쪽: 화살표
+//  왼쪽: 서버가 준 colorHex 타일에 연도 / 가운데: 제목·난이도·설명 / 오른쪽: 화살표
 class ScenarioCard extends StatelessWidget {
   final Scenario scenario;
   final VoidCallback onTap;
@@ -45,6 +45,7 @@ class ScenarioCard extends StatelessWidget {
         color: Colors.transparent,
         padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
               width: 52,
@@ -74,11 +75,19 @@ class ScenarioCard extends StatelessWidget {
                       Text(_difficultyLabel, style: TossText.caption),
                     ],
                   ),
+                  // (#125) 서버가 주는 한 줄 설명 (게임이 시작되는 시점)
+                  if (scenario.description.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(scenario.description, style: TossText.caption),
+                  ],
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right_rounded,
-                color: TossColors.grey400, size: 24),
+            const Padding(
+              padding: EdgeInsets.only(top: 14),
+              child: Icon(Icons.chevron_right_rounded,
+                  color: TossColors.grey400, size: 24),
+            ),
           ],
         ),
       ),
