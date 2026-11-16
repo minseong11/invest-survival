@@ -11,6 +11,7 @@ class ActionResult {
   final List<int> nextCardOptions;    // 다음 카드 선택지
   final DecisionPrompt? nextDecision; // (#125) 다음이 위기 대응이면 그 속보
   final List<NewsItem> nextRoundNews; // (11주차) 다음 이벤트 라운드의 뉴스
+  final double tradeAmount;           // (#125) 위기 대응 응답: 그때 팔거나 산 금액 (원). 버틴다·카드 선택은 0
 
   ActionResult({
     required this.selectedCard,
@@ -20,6 +21,7 @@ class ActionResult {
     this.nextCardOptions = const [],
     this.nextDecision,
     this.nextRoundNews = const [],
+    this.tradeAmount = 0,
   });
 
   factory ActionResult.fromJson(Map<String, dynamic> json) {
@@ -33,6 +35,7 @@ class ActionResult {
       nextDecision:    DecisionPrompt.fromJson(json['nextDecision']),
       rounds:          roundList.map((e) => RoundData.fromJson(e)).toList(),
       nextRoundNews:   NewsItem.listFromJson(json['nextRoundNews']),
+      tradeAmount:     (json['tradeAmount'] as num?)?.toDouble() ?? 0,
     );
   }
 }

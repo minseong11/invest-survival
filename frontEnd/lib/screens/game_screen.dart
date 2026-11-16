@@ -84,6 +84,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   final Set<String> _announcedSkips = {};
   String _skipNotice = '';
 
+  // (#125) 위기 대응을 확정한 직후 차트 위 알림 칸에 잠깐 보여주는 문구 ("절반을 팔았어요 · 140만원")
+  //   화면 아래 토스트로 띄우면 다음 선택의 확정 버튼을 가리므로 알림 칸을 쓴다
+  String _decisionNotice = '';
+  Timer? _decisionNoticeTimer;
+
   // ── Getters ────────────────────────────────
   RoundData get _currentRound {
     final idx = _currentRoundIndex.clamp(0, _session.rounds.length - 1);
@@ -183,6 +188,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   void dispose() {
     _autoTimer?.cancel();
     _bannerTimer?.cancel();
+    _decisionNoticeTimer?.cancel();
     super.dispose();
   }
 
@@ -485,9 +491,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       // (위기 대응 라운드의 속보는 제목 아래에 크게 따로 보여주므로 목록에서는 뺀다)
       final seen = <String>{};
       final promptKey = _showDecision ? _decisionPrompt?.news.key : null;
-      setState(() => _selectNews = items
-          .where((n) => n.key != promptKey && seen.add(n.key))
-          .toList());
+      setState(() {
+        _selectNews = items
+            .where((n) => n.key != promptKey && seen.add(n.key))
+            .toList();
+        // (#125) 앞 라운드의 뉴스 알림이 아직 떠 있으면 닫는다
+        //        (빠른 배속에서는 지난 뉴스가 선택 화면의 헤더를 계속 가렸다)
+        _bannerTimer?.cancel();
+        _bannerNews = null;
+      });
     }
     _showNews(items, sticky: sticky);
     _updateSkipNotice();
@@ -632,13 +644,23 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       HapticFeedback.mediumImpact();
       _decisions[round] = choice;
       _applyActionResult(result);
-      showTossToast(context, DecisionChoice.done(choice));
+      _showDecisionNotice(choice, result.tradeAmount);
     } catch (e) {
       if (!mounted) return;
       showTossToast(context, e.toString());
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
+  }
+
+  void _showDecisionNotice(String choice, double tradeAmount) {
+    final amount = tradeAmount > 0 ? ' · ${formatShortWon(tradeAmount)}' : '';
+    _decisionNoticeTimer?.cancel();
+    setState(() => _decisionNotice =
+        '${DecisionChoice.emoji(choice)} ${DecisionChoice.done(choice)}$amount');
+    _decisionNoticeTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) setState(() => _decisionNotice = '');
+    });
   }
 
   // 카드 선택·위기 대응 응답을 화면 상태에 합친다 (selectedCardId: 카드 선택일 때만)
@@ -990,9 +1012,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         .whereType<CardInfo>()
         .map((c) => '${c.emoji} ${c.name}')
         .join(' · ');
-    // (#125) 발동한 카드가 없고 처음 건너뛴 카드가 있으면 그 이유를 회색으로 알림
-    final text  = names.isNotEmpty ? '$names 발동' : _skipNotice;
-    final fired = names.isNotEmpty;
+    // (#125) 우선순위: 방금 한 위기 대응(파랑) > 발동한 카드(주황) > 처음 건너뛴 카드의 이유(회색)
+    final decided = _decisionNotice.isNotEmpty;
+    final fired   = !decided && names.isNotEmpty;
+    final text    = decided
+        ? _decisionNotice
+        : (names.isNotEmpty ? '$names 발동' : _skipNotice);
     return SizedBox(
       height: 34,
       child: Align(
@@ -1006,7 +1031,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
                   decoration: BoxDecoration(
-                    color: fired ? const Color(0xFFFFF3E0) : TossColors.grey100,
+                    color: decided
+                        ? TossColors.blue50
+                        : (fired ? const Color(0xFFFFF3E0) : TossColors.grey100),
                     borderRadius: BorderRadius.circular(TossRadius.sm),
                   ),
                   child: Text(
@@ -1016,9 +1043,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: fired
-                            ? const Color(0xFFC25E00)
-                            : TossColors.grey600),
+                        color: decided
+                            ? TossColors.blue600
+                            : (fired
+                                ? const Color(0xFFC25E00)
+                                : TossColors.grey600)),
                   ),
                 ),
         ),

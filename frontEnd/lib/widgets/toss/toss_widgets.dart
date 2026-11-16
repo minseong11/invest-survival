@@ -158,8 +158,13 @@ class _RollingTextState extends State<RollingText> {
     final chars = widget.text.characters.toList();
     final n = chars.length;
     final dir = _up ? 1.0 : -1.0;
-    return ClipRect(
-      child: Row(
+    // (#125) 글자가 자리보다 넓으면 넘치지 않고 줄어들게 한다
+    //        (큰 글꼴 설정이나 긴 금액에서 오른쪽이 잘리던 것을 막음)
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: ClipRect(
+        child: Row(
         mainAxisSize: MainAxisSize.min,
         children: List.generate(n, (i) {
           final ch = chars[i];
@@ -189,6 +194,7 @@ class _RollingTextState extends State<RollingText> {
                 key: ValueKey('$fromRight:$ch'), style: widget.style),
           );
         }),
+        ),
       ),
     );
   }
@@ -459,12 +465,15 @@ String formatRankPosition(double topPercent) {
   return bottom < 0.1 ? '하위 0.1% 이내' : '하위 ${bottom.toStringAsFixed(1)}%';
 }
 
+// (#125) 화면 아래 큰 버튼(높이 56) 위에 띄운다.
+//   기존에는 버튼을 4초 동안 덮어, 알림이 떠 있는 동안 버튼을 눌러도 눌리지 않았다
 void showTossToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(
       content: Text(message),
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      duration: const Duration(seconds: 3),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
     ));
 }
 

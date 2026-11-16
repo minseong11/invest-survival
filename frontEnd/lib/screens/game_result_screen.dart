@@ -90,6 +90,8 @@ class _GameResultScreenState extends State<GameResultScreen> {
       if (mine >= 0 && spx < 0) return '시장은 떨어졌지만\n수익을 냈어요';
       return mine >= 0 ? '시장보다 $gap%p\n더 벌었어요' : '시장보다 $gap%p\n덜 잃었어요';
     }
+    // (#125) 시장은 올랐는데 나는 손실 — "시장보다 n%p 더 잃었어요"는 시장도 잃은 것처럼 읽힌다
+    if (mine < 0 && spx >= 0) return '시장은 올랐지만\n손실을 봤어요';
     return mine >= 0 ? '시장보다 $gap%p\n덜 벌었어요' : '시장보다 $gap%p\n더 잃었어요';
   }
 
@@ -203,7 +205,10 @@ class _GameResultScreenState extends State<GameResultScreen> {
   // 결과 요약: 한 줄 결론 + 최종 자산 (숫자 굴러감)
   // =============================================
   Widget _buildHero() {
-    final profit  = _beatMarket; // 시장보다 잘했으면 축하
+    // 시장보다 잘했으면 축하. (#125) 단, 가능한 조합 중 하위권(C·D등급)이면 축하 표시는 하지 않는다
+    final lowGrade = _analysis != null &&
+        (_analysis!.grade == 'C' || _analysis!.grade == 'D');
+    final profit  = _beatMarket && !lowGrade;
     final initial = widget.session.initialAsset.toDouble();
     final asset   = _revealed ? _finalAsset : initial;
     final rate    = _revealed ? _finalReturnRate : 0.0;
@@ -1007,12 +1012,16 @@ class _GameResultScreenState extends State<GameResultScreen> {
         children: [
           Row(
             children: [
-              Text('${r.round}라운드 · ${r.date}',
-                  style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: TossColors.grey500)),
-              const Spacer(),
+              Expanded(
+                child: Text('${r.round}라운드 · ${r.date}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: TossColors.grey500)),
+              ),
+              const SizedBox(width: 8),
               better == null
                   ? const TossBadge(
                       label: '✓ 가장 좋은 대응',
@@ -1100,7 +1109,9 @@ class _GameResultScreenState extends State<GameResultScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionTitle('그 후 이야기'),
-          Text('게임 마지막 날(${ep.endDate}) 이후, 실제 시장은 이렇게 움직였어요.',
+          Text(
+              '게임 마지막 날(${ep.endDate}) 내 수익률은 ${formatSigned(_finalReturnRate)}였어요. '
+              '그 뒤 실제 시장은 이렇게 움직였어요.',
               style: TossText.sub.copyWith(
                   fontSize: 15, color: TossColors.grey700)),
           for (final pt in ep.points) ...[
@@ -1117,7 +1128,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
             row('내 자산을 그대로 뒀다면 (원금 대비)', pt.playerReturnRate,
                 bold: true),
             if (pt.bestReturnRate != null)
-              row('게임 1위 조합을 그대로 뒀다면', pt.bestReturnRate!),
+              row('게임 1위 조합을 그대로 뒀다면 (원금 대비)', pt.bestReturnRate!),
           ],
           const SizedBox(height: 14),
           const InfoBox(
@@ -1168,7 +1179,10 @@ class _GameResultScreenState extends State<GameResultScreen> {
           InfoBox(
             child: Text(
               '${a.cardPoolSize}장 전체 기준이에요. 라운드마다 3장씩만 나오기 때문에, '
-              '이 조합은 게임 중에 고를 수 없었을 수도 있어요.',
+              '이 조합은 게임 중에 고를 수 없었을 수도 있어요.'
+              // (#125) 1라운드의 매도 카드는 팔 주식이 없어 아무 일도 하지 않는다 → 무슨 뜻인지 풀어서 설명
+              '${best.cardAt(1)?.cardId == 8 ? '\n\n1라운드의 역발상 투자는 팔 주식이 없어 아무 일도 하지 않아요. '
+                  '즉, 처음에는 사지 않고 현금을 지킨 조합이 가장 좋았다는 뜻이에요.' : ''}',
               style: TossText.caption,
             ),
           ),

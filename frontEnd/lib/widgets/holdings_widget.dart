@@ -37,12 +37,13 @@ class HoldingCardInfo {
 
   bool get isOnce => kOnceCardIds.contains(cardId);
 
-  // 카드 칩 둘째 줄: "발동 13회" / "발동 0회 · 현금 부족 5번" / "즉시 매수"
+  // 카드 칩 둘째 줄: "발동 13회" / "발동 0회 · 현금 부족" / "즉시 매수"
+  //  칩이 좁아 건너뛴 횟수는 넣지 않는다 (횟수는 결과 화면의 카드별 성적표에 나온다)
   String get statusLabel {
     if (isOnce) return '즉시 매수';
     final base = '발동 $triggerCount회';
     if (skipCount == 0 || skipReason == null) return base;
-    return '$base · ${SkippedCard.label(skipReason!)} $skipCount번';
+    return '$base · ${SkippedCard.shortLabel(skipReason!)}';
   }
 }
 

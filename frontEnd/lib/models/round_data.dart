@@ -24,6 +24,12 @@ class SkippedCard {
         _          => '건너뜀',
       };
 
+  // 카드 칩처럼 좁은 곳에 쓰는 더 짧은 이유
+  static String shortLabel(String reason) => switch (reason) {
+        noHoldings => '보유 없음',
+        _          => label(reason),
+      };
+
   static List<SkippedCard> listFromJson(dynamic raw) {
     if (raw is! List) return const [];
     return raw
