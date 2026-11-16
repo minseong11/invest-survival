@@ -1,30 +1,56 @@
 import 'package:flutter/material.dart';
 import '../models/news_item.dart';
+import '../theme/toss_theme.dart';
+import 'toss/toss_widgets.dart';
 
 // =============================================
-// 뉴스 배너 (11주차)
-// 게임 화면 위에 겹쳐 띄우는 카드 — 기존 레이아웃을 밀어내지 않는다.
+// 뉴스 배너 (11주차) — 토스 스타일
+// 게임 화면 위에서 내려오는 진한 알림 카드. 기존 레이아웃을 밀어내지 않는다.
+// 이 앱에서 빨강은 '수익' 색이라, 위험 뉴스는 빨강 대신 주황으로 표시한다.
 // =============================================
 
 class NewsStyle {
-  final Color accent;
-  final Color background;
-  final IconData icon;
+  final Color accent;     // 라벨 바탕 (진한 배너 위)
+  final Color onAccent;   // 라벨 글자
+  final Color softBg;     // 흰 바탕 위 라벨 바탕 (목록 시트)
+  final Color softFg;     // 흰 바탕 위 라벨 글자
   final String label;
-  const NewsStyle(this.accent, this.background, this.icon, this.label);
+  const NewsStyle(
+      this.accent, this.onAccent, this.softBg, this.softFg, this.label);
 
   static NewsStyle of(String level) {
     switch (level) {
       case 'danger':
-        return const NewsStyle(Color(0xFFE03131), Color(0xFFFFF5F5),
-            Icons.warning_amber_rounded, '위험');
+        return const NewsStyle(TossColors.orange500, TossColors.grey900,
+            Color(0xFFFFF3E0), Color(0xFFC25E00), '위험');
       case 'positive':
-        return const NewsStyle(Color(0xFF2F9E44), Color(0xFFF4FCF5),
-            Icons.trending_up_rounded, '긍정');
+        return const NewsStyle(TossColors.green500, TossColors.white,
+            TossColors.green50, Color(0xFF02874F), '긍정');
       default:
-        return const NewsStyle(Color(0xFFE8A200), Color(0xFFFFFBEB),
-            Icons.info_outline_rounded, '주의');
+        return const NewsStyle(TossColors.grey500, TossColors.white,
+            TossColors.grey100, TossColors.grey700, '주의');
     }
+  }
+}
+
+class _LevelLabel extends StatelessWidget {
+  final String text;
+  final Color bg;
+  final Color fg;
+  const _LevelLabel(this.text, this.bg, this.fg);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(5),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
+    );
   }
 }
 
@@ -45,33 +71,37 @@ class NewsBanner extends StatelessWidget {
     final style = NewsStyle.of(news.level);
     final sub = [
       news.date,
-      if (news.source.isNotEmpty) '출처: ${news.source}',
+      if (news.source.isNotEmpty) news.source,
       if (sticky) '카드를 고를 때 참고하세요',
     ].join(' · ');
 
     return Material(
       color: Colors.transparent,
-      child: GestureDetector(
+      child: Pressable(
         onTap: onClose,
+        haptic: false,
+        scale: 0.98,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
           decoration: BoxDecoration(
-            color: style.background,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: style.accent.withValues(alpha: 0.35)),
+            color: TossColors.grey900,
+            borderRadius: BorderRadius.circular(TossRadius.lg + 2),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.08),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 20,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(style.icon, size: 18, color: style.accent),
-              const SizedBox(width: 8),
+              Padding(
+                padding: const EdgeInsets.only(top: 1),
+                child: _LevelLabel(style.label, style.accent, style.onAccent),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,23 +110,24 @@ class NewsBanner extends StatelessWidget {
                     Text(
                       news.headline,
                       style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF111111),
-                        height: 1.35,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: TossColors.white,
+                        height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
                     Text(
                       sub,
                       style: const TextStyle(
-                          fontSize: 10, color: Color(0xFF6B7684)),
+                          fontSize: 12, color: TossColors.grey400),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 4),
               const Icon(Icons.close_rounded,
-                  size: 16, color: Color(0xFF9AA0A6)),
+                  size: 18, color: TossColors.grey500),
             ],
           ),
         ),
@@ -105,65 +136,80 @@ class NewsBanner extends StatelessWidget {
   }
 }
 
-// 지금까지 나온 뉴스 목록 (헤더 📰 버튼)
+// 지금까지 나온 뉴스 목록 (헤더 신문 버튼)
 void showNewsLogSheet(BuildContext context, List<NewsItem> log) {
   showModalBottomSheet(
     context: context,
-    backgroundColor: Colors.white,
+    isScrollControlled: true,
+    backgroundColor: TossColors.white,
+    barrierColor: Colors.black.withValues(alpha: 0.4),
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      borderRadius:
+          BorderRadius.vertical(top: Radius.circular(TossRadius.sheet)),
     ),
-    builder: (_) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('지금까지의 뉴스',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF111111))),
-            const SizedBox(height: 12),
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: log.length,
-                separatorBuilder: (_, __) => const Divider(height: 16),
-                itemBuilder: (_, i) {
-                  final n = log[log.length - 1 - i]; // 최신 순
-                  final s = NewsStyle.of(n.level);
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(s.icon, size: 16, color: s.accent),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(n.headline,
-                                style: const TextStyle(
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
-                                    color: Color(0xFF111111))),
-                            const SizedBox(height: 2),
-                            Text(
-                              [n.date, if (n.source.isNotEmpty) '출처: ${n.source}']
-                                  .join(' · '),
-                              style: const TextStyle(
-                                  fontSize: 10, color: Color(0xFF6B7684)),
+    builder: (ctx) => SafeArea(
+      top: false,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(ctx).size.height * 0.75),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('지금까지 나온 뉴스 ${log.length}개', style: TossText.title2),
+              const SizedBox(height: 16),
+              Flexible(
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: log.length,
+                  itemBuilder: (_, i) {
+                    final n = log[log.length - 1 - i]; // 최신 순
+                    final s = NewsStyle.of(n.level);
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: _LevelLabel(s.label, s.softBg, s.softFg),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(n.headline,
+                                    style: const TextStyle(
+                                        fontSize: 15,
+                                        fontWeight: FontWeight.w600,
+                                        height: 1.4,
+                                        color: TossColors.grey900)),
+                                const SizedBox(height: 2),
+                                Text(
+                                  [n.date, if (n.source.isNotEmpty) n.source]
+                                      .join(' · '),
+                                  style: TossText.small,
+                                ),
+                              ],
                             ),
-                          ],
-                        ),
+                          ),
+                        ],
                       ),
-                    ],
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 16),
+              TossButton(
+                label: '닫기',
+                type: TossButtonType.secondary,
+                onTap: () => Navigator.of(ctx).pop(),
+              ),
+            ],
+          ),
         ),
       ),
     ),

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/scenario.dart';
+import '../theme/toss_theme.dart';
+import 'toss/toss_widgets.dart';
 
+// 시나리오 한 줄 (토스 ListRow 스타일)
+//  왼쪽: 서버가 준 colorHex 타일에 연도 / 가운데: 제목·난이도 / 오른쪽: 화살표
 class ScenarioCard extends StatelessWidget {
   final Scenario scenario;
   final VoidCallback onTap;
@@ -11,99 +15,96 @@ class ScenarioCard extends StatelessWidget {
     required this.onTap,
   });
 
-  Color get _cardColor {
-    return Color(int.parse('FF${scenario.colorHex}', radix: 16));
+  Color get _tileColor {
+    final hex = scenario.colorHex.replaceAll('#', '');
+    final v = int.tryParse('FF$hex', radix: 16);
+    return v == null ? TossColors.blue50 : Color(v);
   }
 
-  Color get _textColor {
-    final r = int.parse(scenario.colorHex.substring(0, 2), radix: 16);
-    final g = int.parse(scenario.colorHex.substring(2, 4), radix: 16);
-    final b = int.parse(scenario.colorHex.substring(4, 6), radix: 16);
-    final luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-    return luminance > 0.5 ? const Color(0xFF2D1F00) : const Color(0xFFFFF8F0);
+  // 타일이 밝으면 진한 글자, 어두우면 흰 글자
+  Color get _tileTextColor {
+    final c = _tileColor;
+    final luminance = (0.299 * c.r + 0.587 * c.g + 0.114 * c.b);
+    return luminance > 0.5 ? TossColors.grey800 : TossColors.white;
   }
 
-  Widget _buildStars() {
-    return Row(
-      children: List.generate(5, (i) {
-        return Icon(
-          i < scenario.difficulty
-              ? Icons.star_rounded
-              : Icons.star_outline_rounded,
-          size: 14,
-          color:
-              _textColor.withValues(alpha: i < scenario.difficulty ? 0.9 : 0.3),
-        );
-      }),
-    );
-  }
+  String get _difficultyLabel => switch (scenario.difficulty) {
+        >= 5 => '매우 어려움',
+        4 => '어려움',
+        3 => '보통',
+        2 => '쉬움',
+        _ => '매우 쉬움',
+      };
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Pressable(
       onTap: onTap,
+      scale: 0.98,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        decoration: BoxDecoration(
-          color: _cardColor,
-          borderRadius: BorderRadius.circular(16),
-        ),
+        color: Colors.transparent,
+        padding: const EdgeInsets.symmetric(vertical: 12),
         child: Row(
           children: [
+            Container(
+              width: 52,
+              height: 52,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: _tileColor,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text('${scenario.year}',
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: _tileTextColor)),
+            ),
+            const SizedBox(width: 16),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    scenario.title,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: _textColor,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
+                  Text(scenario.title, style: TossText.body2.copyWith(fontSize: 17)),
+                  const SizedBox(height: 2),
                   Row(
                     children: [
-                      Text(
-                        '${scenario.year}',
-                        style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w500,
-                          color: _textColor.withValues(alpha: 0.65),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '·',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _textColor.withValues(alpha: 0.4),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '난이도 ',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _textColor.withValues(alpha: 0.65),
-                        ),
-                      ),
-                      _buildStars(),
+                      _DifficultyDots(level: scenario.difficulty),
+                      const SizedBox(width: 6),
+                      Text(_difficultyLabel, style: TossText.caption),
                     ],
                   ),
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: _textColor.withValues(alpha: 0.4),
-              size: 20,
-            ),
+            const Icon(Icons.chevron_right_rounded,
+                color: TossColors.grey400, size: 24),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _DifficultyDots extends StatelessWidget {
+  final int level;
+  const _DifficultyDots({required this.level});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: List.generate(5, (i) {
+        final on = i < level;
+        return Container(
+          width: 6,
+          height: 6,
+          margin: const EdgeInsets.only(right: 3),
+          decoration: BoxDecoration(
+            color: on ? TossColors.red500 : TossColors.grey200,
+            shape: BoxShape.circle,
+          ),
+        );
+      }),
     );
   }
 }

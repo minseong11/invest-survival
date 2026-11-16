@@ -1,6 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../models/round_data.dart';
+import '../theme/toss_theme.dart';
 
 class StockChart extends StatefulWidget {
   final List<RoundData> rounds;
@@ -74,13 +75,15 @@ class _StockChartState extends State<StockChart> {
     if (widget.rounds.isEmpty) {
       return const Center(
         child: Text('데이터 없음',
-            style: TextStyle(color: Color(0xFF6B7684))),
+            style: TossText.caption),
       );
     }
 
     final spxSpots   = _spxSpots;
     final assetSpots = _assetSpots;
     final hasAsset   = assetSpots.isNotEmpty;
+    // 내 자산 선: 지금 수익이면 빨강, 손실이면 파랑 (토스증권 방식)
+    final assetColor = hasAsset ? TossColors.rate(assetSpots.last.y) : TossColors.red500;
     final minY       = _minY;
     final maxY       = _maxY;
     final range      = (maxY - minY).abs();
@@ -94,10 +97,11 @@ class _StockChartState extends State<StockChart> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              _legendItemDash(const Color(0xFF74B0FF), 'S&P 500'),
-              const SizedBox(width: 12),
-              if (hasAsset)
-                _legendItem(const Color(0xFF3C3489), '내 자산'),
+              if (hasAsset) ...[
+                _legendItem(assetColor, '내 자산'),
+                const SizedBox(width: 12),
+              ],
+              _legendItemDash(TossColors.grey400, 'S&P 500'),
             ],
           ),
         ),
@@ -123,7 +127,7 @@ class _StockChartState extends State<StockChart> {
                   });
                 },
                 touchTooltipData: LineTouchTooltipData(
-                  getTooltipColor: (_) => const Color(0xFF1A1A2E),
+                  getTooltipColor: (_) => TossColors.grey800,
                   getTooltipItems: (spots) {
                     return spots.map((spot) {
                       final label = spot.barIndex == 0
@@ -134,9 +138,9 @@ class _StockChartState extends State<StockChart> {
                         '$label\n${val >= 0 ? '+' : ''}${val.toStringAsFixed(2)}%',
                         TextStyle(
                           color: spot.barIndex == 0
-                              ? const Color(0xFF74B0FF)
+                              ? TossColors.grey300
                               : Colors.white,
-                          fontSize: 11,
+                          fontSize: 12,
                           fontWeight: FontWeight.w600,
                         ),
                       );
@@ -149,7 +153,7 @@ class _StockChartState extends State<StockChart> {
                 if (spxSpots.isNotEmpty)
                   LineChartBarData(
                     spots: spxSpots,
-                    color: const Color(0xFF74B0FF),
+                    color: TossColors.grey300,
                     barWidth: 1.5,
                     isCurved: true,
                     curveSmoothness: 0.3,
@@ -160,7 +164,7 @@ class _StockChartState extends State<StockChart> {
                         final last = idx == spxSpots.length - 1;
                         return FlDotCirclePainter(
                           radius: last ? 2.5 : 0,
-                          color: const Color(0xFF74B0FF),
+                          color: TossColors.grey400,
                           strokeWidth: last ? 1.5 : 0,
                           strokeColor: Colors.white,
                         );
@@ -172,7 +176,7 @@ class _StockChartState extends State<StockChart> {
                 if (hasAsset)
                   LineChartBarData(
                     spots: assetSpots,
-                    color: const Color(0xFF3C3489),
+                    color: assetColor,
                     barWidth: 2.5,
                     isCurved: true,
                     curveSmoothness: 0.3,
@@ -181,8 +185,8 @@ class _StockChartState extends State<StockChart> {
                       getDotPainter: (spot, _, __, idx) {
                         final last = idx == assetSpots.length - 1;
                         return FlDotCirclePainter(
-                          radius: last ? 4 : 0,
-                          color: const Color(0xFF3C3489),
+                          radius: last ? 4.5 : 0,
+                          color: assetColor,
                           strokeWidth: last ? 2 : 0,
                           strokeColor: Colors.white,
                         );
@@ -194,41 +198,25 @@ class _StockChartState extends State<StockChart> {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          const Color(0xFF3C3489).withValues(alpha: 0.18),
-                          const Color(0xFF3C3489).withValues(alpha: 0.02),
+                          assetColor.withValues(alpha: 0.14),
+                          assetColor.withValues(alpha: 0.0),
                         ],
                       ),
                     ),
                   ),
               ],
-              gridData: FlGridData(
-                show: true,
-                drawVerticalLine: false,
-                horizontalInterval: interval,
-                getDrawingHorizontalLine: (value) => FlLine(
-                  color: value.abs() < 0.01
-                      ? const Color(0xFFCCCCCC)
-                      : const Color(0xFFEEEEEE),
-                  strokeWidth: value.abs() < 0.01 ? 1.0 : 0.5,
-                ),
-              ),
+              gridData: FlGridData(show: false),
               extraLinesData: ExtraLinesData(
                 horizontalLines: [
                   HorizontalLine(
                     y: 0,
-                    color: const Color(0xFFBBBBBB),
+                    color: TossColors.grey200,
                     strokeWidth: 1,
-                    dashArray: [4, 4],
+                    dashArray: [3, 3],
                   ),
                 ],
               ),
-              borderData: FlBorderData(
-                show: true,
-                border: const Border(
-                  bottom: BorderSide(color: Color(0xFFEEEEEE), width: 1),
-                  left:   BorderSide(color: Color(0xFFEEEEEE), width: 1),
-                ),
-              ),
+              borderData: FlBorderData(show: false),
               titlesData: FlTitlesData(
                 leftTitles: AxisTitles(
                   sideTitles: SideTitles(
@@ -240,7 +228,7 @@ class _StockChartState extends State<StockChart> {
                       child: Text(
                         '${value >= 0 ? '+' : ''}${value.toStringAsFixed(0)}%',
                         style: const TextStyle(
-                            fontSize: 8, color: Color(0xFF6B7684)),
+                            fontSize: 10, color: TossColors.grey400),
                         textAlign: TextAlign.right,
                       ),
                     ),
@@ -268,7 +256,7 @@ class _StockChartState extends State<StockChart> {
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(label,
                             style: const TextStyle(
-                                fontSize: 8, color: Color(0xFF6B7684))),
+                                fontSize: 10, color: TossColors.grey400)),
                       );
                     },
                   ),
@@ -285,15 +273,15 @@ class _StockChartState extends State<StockChart> {
     return Row(
       children: [
         Container(
-          width: 12,
-          height: 2.5,
+          width: 8,
+          height: 8,
           decoration: BoxDecoration(
-              color: color, borderRadius: BorderRadius.circular(1)),
+              color: color, shape: BoxShape.circle),
         ),
-        const SizedBox(width: 3),
+        const SizedBox(width: 5),
         Text(label,
             style: const TextStyle(
-                fontSize: 9, color: Color(0xFF6B7684))),
+                fontSize: 12, color: TossColors.grey600)),
       ],
     );
   }
@@ -309,10 +297,10 @@ class _StockChartState extends State<StockChart> {
             painter: _DashPainter(color: color),
           ),
         ),
-        const SizedBox(width: 3),
+        const SizedBox(width: 5),
         Text(label,
             style: const TextStyle(
-                fontSize: 9, color: Color(0xFF6B7684))),
+                fontSize: 12, color: TossColors.grey600)),
       ],
     );
   }
