@@ -123,6 +123,7 @@ def main():
     total = len(CASES) + 2
     print('=' * 70)
     print(f'결과: {total - fail}/{total} 통과')
+    return fail     # (#125) 실패 수 — tests/test_existing_scripts.py에서 0인지 확인
 
 
 if __name__ == '__main__':
