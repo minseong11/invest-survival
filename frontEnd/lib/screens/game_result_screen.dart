@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/game_session.dart';
 import '../models/card_info.dart';
 import '../models/result_analysis.dart';
 import '../services/game_service.dart';
+import '../theme/toss_theme.dart';
+import '../widgets/toss/toss_widgets.dart';
 
 class GameResultScreen extends StatefulWidget {
   final GameSession session;
@@ -22,26 +26,18 @@ class GameResultScreen extends StatefulWidget {
   State<GameResultScreen> createState() => _GameResultScreenState();
 }
 
-class _GameResultScreenState extends State<GameResultScreen>
-    with SingleTickerProviderStateMixin {
+class _GameResultScreenState extends State<GameResultScreen> {
   final GameService _gameService = GameService();
 
-  late AnimationController _controller;
-  late Animation<double> _assetAnim;
-  late Animation<double> _returnAnim;
+  // 숫자 공개 연출: 처음엔 시작 자산·0%를 보여주고, 잠시 뒤 최종 값으로 굴러감
+  bool _revealed = false;
+  Timer? _revealTimer;
 
   // 사후 분석 (백테스팅, API v6.1)
   ResultAnalysis? _analysis;
   bool _analysisLoading = true;
 
   static const List<int> _selectRounds = [1, 25, 50, 75];
-
-  static const Color _purple     = Color(0xFF3C3489);
-  static const Color _purpleSoft = Color(0xFFEEEDFE);
-  static const Color _gray       = Color(0xFF6B7684);
-  static const Color _border     = Color(0xFFEEEEEE);
-  static const Color _profitRed  = Color(0xFFE03131);
-  static const Color _lossBlue   = Color(0xFF1971C2);
 
   double get _finalAsset {
     for (int i = widget.session.rounds.length - 1; i >= 0; i--) {
@@ -65,32 +61,11 @@ class _GameResultScreenState extends State<GameResultScreen>
   void initState() {
     super.initState();
 
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 2000),
-    );
-
-    // 자산 카운트업: initialAsset → finalAsset
-    _assetAnim = Tween<double>(
-      begin: widget.session.initialAsset.toDouble(),
-      end: _finalAsset,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.8, curve: Curves.easeOut),
-    ));
-
-    // 수익률 카운트업: 0 → finalReturnRate
-    _returnAnim = Tween<double>(
-      begin: 0,
-      end: _finalReturnRate,
-    ).animate(CurvedAnimation(
-      parent: _controller,
-      curve: const Interval(0.0, 0.8, curve: Curves.easeOut),
-    ));
-
-    // 화면 진입 후 0.3초 딜레이 후 시작
-    Future.delayed(const Duration(milliseconds: 300), () {
-      if (mounted) _controller.forward();
+    // 화면 진입 후 0.5초 뒤 숫자 공개
+    _revealTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      HapticFeedback.mediumImpact();
+      setState(() => _revealed = true);
     });
 
     // 사후 분석: 결과 화면 진입 시 1회 호출 (v6.1 합의 2번)
@@ -110,23 +85,11 @@ class _GameResultScreenState extends State<GameResultScreen>
 
   @override
   void dispose() {
-    _controller.dispose();
+    _revealTimer?.cancel();
     super.dispose();
   }
 
-  String _formatNumber(double value) {
-    return value
-        .toStringAsFixed(0)
-        .replaceAllMapped(
-          RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-          (m) => '${m[1]},',
-        );
-  }
-
-  String _formatRate(double v) =>
-      '${v >= 0 ? '+' : ''}${v.toStringAsFixed(2)}%';
-
-  Color _rateColor(double v) => v >= 0 ? _profitRed : _lossBlue;
+  String _formatNumber(double value) => formatWon(value);
 
   // 상위 % 표기 (0.1 미만이면 "상위 0.1% 이내")
   String _formatTopPercent(double p) =>
@@ -140,87 +103,41 @@ class _GameResultScreenState extends State<GameResultScreen>
 
   @override
   Widget build(BuildContext context) {
-    final profit     = _finalReturnRate >= 0;
-    final color      = profit ? _profitRed : _lossBlue;
+    final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFFAF9F5),
+      backgroundColor: TossColors.background,
       body: SafeArea(
+        bottom: false,
         child: Column(
           children: [
-            // 스크롤 영역 (사후 분석 섹션이 추가되어 화면을 넘칠 수 있음)
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24, 40, 24, 16),
+                padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 태그
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: _purpleSoft,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Text('게임 종료',
-                          style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _purple)),
+                    FadeInUp(child: _buildHero()),
+                    const SizedBox(height: 8),
+                    FadeInUp(
+                      delay: const Duration(milliseconds: 120),
+                      child: _buildAssetRows(),
                     ),
-                    const SizedBox(height: 12),
-
-                    // 시나리오 제목
-                    Text(
-                      widget.session.scenarioTitle,
-                      style: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF111111)),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${widget.session.totalRounds}라운드 완료',
-                      style: const TextStyle(fontSize: 14, color: _gray),
-                    ),
-
-                    const SizedBox(height: 28),
-
-                    _buildAssetCard(profit, color),
-                    const SizedBox(height: 16),
-                    _buildReturnBadge(profit, color),
-
-                    const SizedBox(height: 28),
-
+                    const SizedBox(height: 8),
                     _buildAnalysisSection(),
                   ],
                 ),
               ),
             ),
 
-            // 다시 하기 버튼 (하단 고정)
+            // 처음으로 (하단 고정)
             Padding(
-              padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
-              child: SizedBox(
-                width: double.infinity,
-                height: 52,
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context)
-                        .popUntil((route) => route.isFirst);
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF111111),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text('다시 시작하기',
-                      style: TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w700)),
-                ),
+              padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
+              child: TossButton(
+                label: '처음으로 돌아가기',
+                onTap: () {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                },
               ),
             ),
           ],
@@ -230,121 +147,101 @@ class _GameResultScreenState extends State<GameResultScreen>
   }
 
   // =============================================
-  // 기존: 자산 변화 카드
+  // 결과 요약: 한 줄 결론 + 최종 자산 (숫자 굴러감)
   // =============================================
-  Widget _buildAssetCard(bool profit, Color color) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: _border, width: 1),
-      ),
+  Widget _buildHero() {
+    final profit  = _finalReturnRate >= 0;
+    final initial = widget.session.initialAsset.toDouble();
+    final asset   = _revealed ? _finalAsset : initial;
+    final rate    = _revealed ? _finalReturnRate : 0.0;
+    final diff    = asset - initial;
+
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 시작 자산
+          Text(
+            '${widget.session.scenarioTitle} · ${widget.session.totalRounds}라운드 완료',
+            style: TossText.sub,
+          ),
+          const SizedBox(height: 8),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('시작 자산',
-                  style: TextStyle(fontSize: 14, color: _gray)),
-              Text(
-                '₩${_formatNumber(widget.session.initialAsset.toDouble())}',
-                style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF111111)),
+              Flexible(
+                child: Text(profit ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요',
+                    style: TossText.title1),
               ),
+              const SizedBox(width: 6),
+              if (profit)
+                AnimatedScale(
+                  scale: _revealed ? 1 : 0,
+                  duration: const Duration(milliseconds: 500),
+                  curve: Curves.easeOutBack,
+                  child: const Text('🎉', style: TextStyle(fontSize: 26)),
+                ),
             ],
           ),
-
-          // 화살표
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            child: Row(
-              children: [
-                Expanded(child: Container(height: 1, color: _border)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  child: Icon(
-                    profit
-                        ? Icons.arrow_upward_rounded
-                        : Icons.arrow_downward_rounded,
-                    color: color,
-                    size: 28,
-                  ),
-                ),
-                Expanded(child: Container(height: 1, color: _border)),
-              ],
-            ),
-          ),
-
-          // 최종 자산 (카운트업)
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('최종 자산',
-                  style: TextStyle(fontSize: 14, color: _gray)),
-              AnimatedBuilder(
-                animation: _assetAnim,
-                builder: (_, __) => Text(
-                  '₩${_formatNumber(_assetAnim.value)}',
-                  style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: color),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // =============================================
-  // 기존: 수익률 뱃지 (카운트업)
-  // =============================================
-  Widget _buildReturnBadge(bool profit, Color color) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 18),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withValues(alpha: 0.2), width: 1),
-      ),
-      child: Column(
-        children: [
-          AnimatedBuilder(
-            animation: _returnAnim,
-            builder: (_, __) {
-              final val = _returnAnim.value;
-              return Text(
-                _formatRate(val),
-                style: TextStyle(
-                    fontSize: 36,
-                    fontWeight: FontWeight.w800,
-                    color: _rateColor(val)),
-              );
-            },
+          const SizedBox(height: 20),
+          const Text('최종 자산', style: TossText.caption),
+          const SizedBox(height: 2),
+          RollingText(
+            '${_formatNumber(asset)}원',
+            value: asset,
+            duration: const Duration(milliseconds: 700),
+            style: TossText.display.copyWith(fontSize: 32),
           ),
           const SizedBox(height: 4),
-          Text(
-            profit ? '수익을 달성했어요 🎉' : '손실이 발생했어요',
+          RollingText(
+            '${diff >= 0 ? '+' : '-'}${_formatNumber(diff.abs())}원 '
+            '(${rate.abs().toStringAsFixed(2)}%)',
+            value: asset,
+            duration: const Duration(milliseconds: 700),
             style: TextStyle(
-                fontSize: 14,
-                color: color.withValues(alpha: 0.8),
-                fontWeight: FontWeight.w500),
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: _revealed
+                    ? TossColors.rate(_finalReturnRate)
+                    : TossColors.grey500,
+                fontFeatures: const [FontFeature.tabularFigures()]),
           ),
         ],
       ),
     );
   }
 
+  Widget _buildAssetRows() {
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      child: Column(
+        children: [
+          _kvRow('시작 자산',
+              '${_formatNumber(widget.session.initialAsset.toDouble())}원'),
+          _kvRow('최종 자산', '${_formatNumber(_finalAsset)}원'),
+          _kvRow('최종 수익률', formatRate(_finalReturnRate),
+              valueColor: TossColors.rate(_finalReturnRate)),
+        ],
+      ),
+    );
+  }
+
+  Widget _kvRow(String k, String v, {Color? valueColor}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: [
+          Text(k, style: TossText.sub.copyWith(fontSize: 15)),
+          const Spacer(),
+          Text(v,
+              style: TossText.number.copyWith(
+                  color: valueColor ?? TossColors.grey900)),
+        ],
+      ),
+    );
+  }
+
   // =============================================
-  // 신규: 사후 분석 섹션 (백테스팅, API v6.1)
+  // 사후 분석 섹션 (백테스팅, API v6.1)
   // =============================================
   Widget _buildAnalysisSection() {
     if (_analysisLoading) return _buildAnalysisLoading();
@@ -353,59 +250,32 @@ class _GameResultScreenState extends State<GameResultScreen>
     final a = _analysis;
     if (a == null) return const SizedBox.shrink();
 
+    final sections = <Widget>[
+      _buildRankCard(a),
+      if (a.best != null) _buildCompareCard(a, a.best!),
+      if (widget.aiPicks.isNotEmpty) _buildAiPickCard(a),
+      if (a.topCombos.isNotEmpty) _buildTopCombosCard(a),
+    ];
+
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 제목 + 기준 범위
-        Row(
-          children: [
-            const Text('사후 분석',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF111111))),
-            const Spacer(),
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: _purpleSoft,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Text('${a.cardPoolSize}장 전체 조합 기준',
-                  style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                      color: _purple)),
-            ),
-          ],
-        ),
-        const SizedBox(height: 10),
-
-        _buildRankCard(a),
-        const SizedBox(height: 12),
-
-        if (a.best != null) ...[
-          _buildCompareCard(a, a.best!),
-          const SizedBox(height: 12),
+        for (int i = 0; i < sections.length; i++) ...[
+          FadeInUp(
+            delay: Duration(milliseconds: 80 * i),
+            child: sections[i],
+          ),
+          const SizedBox(height: 8),
         ],
-
-        if (widget.aiPicks.isNotEmpty) ...[
-          _buildAiPickCard(a),
-          const SizedBox(height: 12),
-        ],
-
-        if (a.topCombos.isNotEmpty) ...[
-          _buildTopCombosCard(a),
-          const SizedBox(height: 10),
-        ],
-
         // 계산 근거 (명세서 6장)
-        const Text(
-          '게임 종료 후 100라운드 시장 데이터를 모두 사용하여 계산한 결과로, '
-          '게임 중에는 알 수 없는 정보입니다. 라운드마다 카드가 3장씩만 '
-          '제시되므로, 최적 조합에는 이번 게임에서 보지 못한 카드가 포함될 수 있어요.',
-          style: TextStyle(fontSize: 10.5, color: _gray, height: 1.5),
+        const Padding(
+          padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: Text(
+            '게임 종료 후 100라운드 시장 데이터를 모두 사용해 계산한 결과로, '
+            '게임 중에는 알 수 없는 정보예요. 라운드마다 카드가 3장씩만 '
+            '제시되므로, 최적 조합에는 이번 게임에서 보지 못한 카드가 포함될 수 있어요.',
+            style: TossText.small,
+          ),
         ),
       ],
     );
@@ -413,29 +283,32 @@ class _GameResultScreenState extends State<GameResultScreen>
 
   // 로딩 (서버 계산 약 3.7초)
   Widget _buildAnalysisLoading() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border, width: 1),
-      ),
-      child: const Row(
+    return const TossSection(
+      padding: EdgeInsets.symmetric(horizontal: 24, vertical: 22),
+      child: Row(
         children: [
           SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              valueColor: AlwaysStoppedAnimation(_purple),
-            ),
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2.2),
           ),
-          SizedBox(width: 12),
+          SizedBox(width: 14),
           Expanded(
-            child: Text('가능한 카드 조합을 모두 계산하는 중이에요...',
-                style: TextStyle(fontSize: 12, color: _gray)),
+            child: Text('가능한 카드 조합을 모두 계산하고 있어요',
+                style: TossText.sub),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionTitle(String title, {Widget? trailing}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        children: [
+          Expanded(child: Text(title, style: TossText.title3)),
+          if (trailing != null) trailing,
         ],
       ),
     );
@@ -443,56 +316,38 @@ class _GameResultScreenState extends State<GameResultScreen>
 
   // ① 내 조합 순위
   Widget _buildRankCard(ResultAnalysis a) {
-    final p        = a.playerResult;
-    final isBest   = p.rank == 1;
+    final p      = a.playerResult;
+    final isBest = p.rank == 1;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border, width: 1),
-      ),
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('내 조합 순위',
-              style: TextStyle(fontSize: 12, color: _gray)),
-          const SizedBox(height: 6),
+          _sectionTitle(
+            '내 조합 순위',
+            trailing: TossBadge(
+                label: '${a.cardPoolSize}장 전체 조합 기준',
+                bg: TossColors.grey100,
+                fg: TossColors.grey600),
+          ),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text(
-                '${_formatNumber(p.rank.toDouble())}위',
-                style: const TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.w800,
-                    color: _purple),
-              ),
-              const SizedBox(width: 8),
+              Text('${_formatNumber(p.rank.toDouble())}위',
+                  style: TossText.display.copyWith(color: TossColors.blue500)),
+              const SizedBox(width: 6),
               Padding(
                 padding: const EdgeInsets.only(bottom: 5),
                 child: Text(
                   '/ ${_formatNumber(a.totalCombinations.toDouble())}개 조합',
-                  style: const TextStyle(fontSize: 12, color: _gray),
+                  style: TossText.caption,
                 ),
               ),
               const Spacer(),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: _purple,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  _formatTopPercent(p.topPercent),
-                  style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.white),
-                ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: TossBadge(label: _formatTopPercent(p.topPercent)),
               ),
             ],
           ),
@@ -500,9 +355,9 @@ class _GameResultScreenState extends State<GameResultScreen>
             const SizedBox(height: 8),
             const Text('가능한 조합 중 가장 좋은 선택이었어요 🎉',
                 style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: _purple)),
+                    color: TossColors.blue500)),
           ],
         ],
       ),
@@ -517,107 +372,45 @@ class _GameResultScreenState extends State<GameResultScreen>
       final top  = best.cardAt(r);
       return mine != null && top != null && mine.cardId == top.cardId;
     }).length;
-    const bestLabel = '1위 조합';
-    final diff      = best.finalReturnRate - p.finalReturnRate;
+    final diff = best.finalReturnRate - p.finalReturnRate;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border, width: 1),
-      ),
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              const Text('내 조합 vs 1위 조합',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFF111111))),
-              const Spacer(),
-              Text('4장 중 $matchCount장 일치',
-                  style: const TextStyle(fontSize: 11, color: _gray)),
-            ],
+          _sectionTitle(
+            '1위 조합과 비교해 봤어요',
+            trailing: Text('4장 중 $matchCount장 같음', style: TossText.caption),
           ),
-          const SizedBox(height: 12),
-
-          // 헤더
-          Row(
-            children: [
-              const SizedBox(
-                  width: 36,
-                  child: Text('라운드',
-                      style: TextStyle(fontSize: 10, color: _gray))),
-              const Expanded(
-                  child: Text('내 선택',
-                      style: TextStyle(fontSize: 10, color: _gray))),
-              const SizedBox(width: 20),
-              Expanded(
-                  child: Text(bestLabel,
-                      style: const TextStyle(fontSize: 10, color: _gray))),
-            ],
-          ),
-          const SizedBox(height: 6),
-
+          _tableHeader(const ['내 선택', '1위 조합']),
           ..._selectRounds.map((r) {
             final mine = p.cardAt(r);
             final top  = best.cardAt(r);
             final same = mine != null && top != null && mine.cardId == top.cardId;
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 36,
-                    child: Text('${r}R',
-                        style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: _gray)),
-                  ),
-                  Expanded(child: _buildCardChip(mine, highlight: same)),
-                  SizedBox(
-                    width: 20,
-                    child: Icon(
-                      same ? Icons.check_rounded : Icons.chevron_right_rounded,
-                      size: 14,
-                      color: same ? const Color(0xFF0F6E56) : _gray,
-                    ),
-                  ),
-                  Expanded(child: _buildCardChip(top, highlight: same)),
-                ],
-              ),
+            return _tableRow(
+              r,
+              [
+                _buildCardChip(mine, highlight: same),
+                _buildCardChip(top, highlight: same),
+              ],
             );
           }),
-
-          const SizedBox(height: 10),
-          Container(height: 1, color: _border),
-          const SizedBox(height: 10),
-
-          // 수익률 비교
+          const SizedBox(height: 12),
+          Container(height: 1, color: TossColors.grey100),
+          const SizedBox(height: 12),
           Row(
             children: [
+              Expanded(child: _buildRateColumn('내 수익률', p.finalReturnRate)),
               Expanded(
-                child: _buildRateColumn('내 수익률', p.finalReturnRate),
-              ),
-              Expanded(
-                child: _buildRateColumn('1위 수익률', best.finalReturnRate),
-              ),
+                  child: _buildRateColumn('1위 수익률', best.finalReturnRate)),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text('차이',
-                      style: TextStyle(fontSize: 10, color: _gray)),
+                  const Text('차이', style: TossText.small),
                   const SizedBox(height: 2),
                   Text('${diff.toStringAsFixed(2)}%p',
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF111111))),
+                      style: TossText.number),
                 ],
               ),
             ],
@@ -633,44 +426,13 @@ class _GameResultScreenState extends State<GameResultScreen>
     final best   = a.best;
     final rounds = widget.aiPicks.keys.toList()..sort();
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border, width: 1),
-      ),
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('AI 예측은 맞았을까?',
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF111111))),
-          const SizedBox(height: 12),
-          Row(
-            children: const [
-              SizedBox(
-                  width: 36,
-                  child: Text('라운드',
-                      style: TextStyle(fontSize: 10, color: _gray))),
-              Expanded(
-                  child: Text('AI 예측 1위',
-                      style: TextStyle(fontSize: 10, color: _gray))),
-              SizedBox(width: 8),
-              Expanded(
-                  child: Text('내 선택',
-                      style: TextStyle(fontSize: 10, color: _gray))),
-              SizedBox(
-                  width: 56,
-                  child: Text('1위 조합과',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(fontSize: 10, color: _gray))),
-            ],
-          ),
-          const SizedBox(height: 6),
+          _sectionTitle('AI 예측은 맞았을까요?'),
+          _tableHeader(const ['AI 예측 1위', '내 선택'], trailing: '1위 조합과'),
           ...rounds.map((r) {
             final aiId   = widget.aiPicks[r]!;
             final mine   = a.playerResult.cardAt(r);
@@ -687,43 +449,72 @@ class _GameResultScreenState extends State<GameResultScreen>
               cardId: aiId,
               cardName: CardInfo.fromId(aiId)?.name ?? '',
             );
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 36,
-                    child: Text('${r}R',
-                        style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: _gray)),
-                  ),
-                  Expanded(child: _buildCardChip(aiCard, highlight: aiHit)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _buildCardChip(mine)),
-                  SizedBox(
-                    width: 56,
-                    child: Text(
-                      verdict,
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: aiHit ? const Color(0xFF0F6E56) : _gray),
-                    ),
-                  ),
-                ],
+            return _tableRow(
+              r,
+              [
+                _buildCardChip(aiCard, highlight: aiHit),
+                _buildCardChip(mine),
+              ],
+              trailing: Text(
+                verdict,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: aiHit ? TossColors.green500 : TossColors.grey500),
               ),
             );
           }),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           const Text(
             'AI 예측은 그때까지의 시장만 보고 한 것이고, 1위 조합은 게임이 끝난 뒤 '
             '전체 시장으로 계산한 결과예요. 미래를 모르면 예측이 틀릴 수 있어요. '
             '"후보 밖"은 1위 조합의 카드가 그 라운드 후보 3장에 없었다는 뜻이에요.',
-            style: TextStyle(fontSize: 10.5, color: _gray, height: 1.5),
+            style: TossText.small,
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableHeader(List<String> cols, {String? trailing}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          const SizedBox(width: 40, child: Text('라운드', style: TossText.small)),
+          for (int i = 0; i < cols.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            Expanded(child: Text(cols[i], style: TossText.small)),
+          ],
+          if (trailing != null)
+            SizedBox(
+                width: 60,
+                child: Text(trailing,
+                    textAlign: TextAlign.right, style: TossText.small)),
+        ],
+      ),
+    );
+  }
+
+  Widget _tableRow(int round, List<Widget> cells, {Widget? trailing}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Text('${round}R',
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: TossColors.grey500)),
+          ),
+          for (int i = 0; i < cells.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            Expanded(child: cells[i]),
+          ],
+          if (trailing != null) SizedBox(width: 60, child: trailing),
         ],
       ),
     );
@@ -733,40 +524,37 @@ class _GameResultScreenState extends State<GameResultScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: const TextStyle(fontSize: 10, color: _gray)),
+        Text(label, style: TossText.small),
         const SizedBox(height: 2),
-        Text(_formatRate(rate),
-            style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: _rateColor(rate))),
+        Text(formatRate(rate),
+            style: TossText.number.copyWith(color: TossColors.rate(rate))),
       ],
     );
   }
 
   Widget _buildCardChip(AnalysisCard? card, {bool highlight = false}) {
     if (card == null) {
-      return const Text('-', style: TextStyle(fontSize: 11, color: _gray));
+      return const Text('-', style: TossText.caption);
     }
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: highlight ? _purpleSoft : const Color(0xFFF7F7F9),
-        borderRadius: BorderRadius.circular(8),
+        color: highlight ? TossColors.blue50 : TossColors.grey50,
+        borderRadius: BorderRadius.circular(TossRadius.sm + 2),
       ),
       child: Row(
         children: [
-          Text(_cardEmoji(card.cardId), style: const TextStyle(fontSize: 13)),
-          const SizedBox(width: 4),
+          Text(_cardEmoji(card.cardId), style: const TextStyle(fontSize: 14)),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
               _cardName(card),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                  fontSize: 11,
+                  fontSize: 13,
                   fontWeight: highlight ? FontWeight.w700 : FontWeight.w500,
-                  color: highlight ? _purple : const Color(0xFF333333)),
+                  color: highlight ? TossColors.blue600 : TossColors.grey800),
             ),
           ),
         ],
@@ -780,84 +568,64 @@ class _GameResultScreenState extends State<GameResultScreen>
     // 순위가 1위 → 7위처럼 건너뛸 수 있음 → 그때만 이유를 안내
     final rankSkipped = a.hasSkippedRank;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _border, width: 1),
-      ),
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('이 시나리오의 최적 조합 Top ${a.topCombos.length}',
-              style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF111111))),
-          const SizedBox(height: 12),
-          ...a.topCombos.map((c) => _buildComboRow(a, c)),
+          _sectionTitle('이 시나리오 최고의 조합 ${a.topCombos.length}개'),
+          ...a.topCombos.map((c) => _buildComboRow(c)),
           if (rankSkipped) ...[
             const SizedBox(height: 4),
             const Text(
               '최종 자산이 같은 조합은 하나로 묶어 보여줘요. 그래서 순위가 '
               '건너뛸 수 있어요. (한 번도 발동하지 않은 카드만 다르면 결과가 같아요)',
-              style: TextStyle(fontSize: 10.5, color: _gray, height: 1.5),
+              style: TossText.small,
             ),
+            const SizedBox(height: 8),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildComboRow(ResultAnalysis a, ComboResult c) {
-    final rankLabel = '${c.rank}위';
+  Widget _buildComboRow(ComboResult c) {
+    final first = c.rank == 1;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.only(bottom: 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: c.rank == 1 ? _purple : _purpleSoft,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(rankLabel,
-                    style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: c.rank == 1 ? Colors.white : _purple)),
+              TossBadge(
+                label: '${c.rank}위',
+                bg: first ? TossColors.blue500 : TossColors.grey100,
+                fg: first ? TossColors.white : TossColors.grey700,
               ),
               const Spacer(),
-              Text(_formatRate(c.finalReturnRate),
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: _rateColor(c.finalReturnRate))),
+              Text(formatRate(c.finalReturnRate),
+                  style: TossText.number
+                      .copyWith(color: TossColors.rate(c.finalReturnRate))),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 8),
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: c.cards.map((card) {
               return Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF7F7F9),
-                  borderRadius: BorderRadius.circular(8),
+                  color: TossColors.grey50,
+                  borderRadius: BorderRadius.circular(TossRadius.sm),
                 ),
                 child: Text(
                   '${card.round}R ${_cardEmoji(card.cardId)} ${_cardName(card)}',
                   style: const TextStyle(
-                      fontSize: 10.5, color: Color(0xFF333333)),
+                      fontSize: 13, color: TossColors.grey700),
                 ),
               );
             }).toList(),

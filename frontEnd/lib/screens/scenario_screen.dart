@@ -5,6 +5,8 @@ import '../models/game_session.dart';
 import '../services/game_service.dart';
 import '../services/mock_data.dart';
 import '../widgets/scenario_card.dart';
+import '../widgets/toss/toss_widgets.dart';
+import '../theme/toss_theme.dart';
 import 'game_screen.dart';
 
 class ScenarioScreen extends StatefulWidget {
@@ -72,14 +74,7 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isStarting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString()),
-          backgroundColor: Colors.red[700],
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        ),
-      );
+      showTossToast(context, e.toString());
     }
   }
 
@@ -96,79 +91,52 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAF9F5),
+      backgroundColor: TossColors.white,
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(),
-              const SizedBox(height: 20),
-              // 개발용 버튼: 디버그 실행에서만 표시
-              if (kDebugMode) ...[
-                _buildMockButtons(),
-                const SizedBox(height: 20),
-              ],
-              Expanded(child: _buildBody()),
-            ],
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 36, 24, 8),
+              child: _buildHeader(),
+            ),
+            // 개발용 버튼: 디버그 실행에서만 표시
+            if (kDebugMode)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(24, 8, 24, 0),
+                child: _buildMockButtons(),
+              ),
+            const SizedBox(height: 16),
+            Expanded(child: _buildBody()),
+          ],
         ),
       ),
     );
   }
 
   Widget _buildMockButtons() {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFFF3CD),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFFD700), width: 1),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '개발용 임시 버튼',
-            style: TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF856404),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
+    return Row(
+      children: [
+        const TossBadge(
+            label: '개발용', bg: TossColors.grey100, fg: TossColors.grey600),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
             children: [
-              // 수동 API 요청 버튼
-              Expanded(
-                child: _mockButton(
-                  label: '시나리오 수동 요청',
-                  onTap: _loadScenarios,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // 임시 mock 데이터 버튼
-              Expanded(
-                child: _mockButton(
-                  label: '임시 시나리오 불러오기',
-                  onTap: _loadMockScenarios,
-                ),
-              ),
-              const SizedBox(width: 8),
-              // 임시 게임 바로 시작
-              Expanded(
-                child: _mockButton(
-                  label: '임시 게임 시작',
-                  onTap: _scenarios.isEmpty
-                      ? null
-                      : () => _startMockGame(_scenarios[0]),
-                ),
+              _mockButton(label: '수동 요청', onTap: _loadScenarios),
+              _mockButton(label: '임시 시나리오', onTap: _loadMockScenarios),
+              _mockButton(
+                label: '임시 게임',
+                onTap: _scenarios.isEmpty
+                    ? null
+                    : () => _startMockGame(_scenarios[0]),
               ),
             ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -176,82 +144,63 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
     required String label,
     required VoidCallback? onTap,
   }) {
-    return GestureDetector(
+    return TossChipButton(
+      label: label,
       onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
-        decoration: BoxDecoration(
-          color: onTap == null
-              ? const Color(0xFFEEEEEE)
-              : const Color(0xFF111111),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Text(
-          label,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            fontSize: 10,
-            fontWeight: FontWeight.w600,
-            color: onTap == null
-                ? const Color(0xFFAAAAAA)
-                : Colors.white,
-          ),
-        ),
-      ),
+      bg: TossColors.grey100,
+      fg: onTap == null ? TossColors.grey400 : TossColors.grey700,
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const Center(
+        child: SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 3),
+        ),
+      );
     }
     if (_errorMessage != null) {
-      return Center(
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.wifi_off_rounded, size: 36, color: Color(0xFF6B7684)),
-            const SizedBox(height: 12),
+            const EmojiTile(emoji: '📡', size: 64),
+            const SizedBox(height: 20),
+            const Text('서버에 연결하지 못했어요', style: TossText.title3),
+            const SizedBox(height: 6),
             Text(
               _errorMessage!,
-              style: const TextStyle(color: Color(0xFF6B7684)),
+              style: TossText.caption,
               textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
             ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                TextButton(
-                  onPressed: _loadScenarios,
-                  child: const Text('다시 시도'),
-                ),
-                if (kDebugMode) ...[
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _loadMockScenarios,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF111111),
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                    ),
-                    child: const Text('임시 데이터로 계속', style: TextStyle(fontSize: 13)),
-                  ),
-                ],
-              ],
+            const SizedBox(height: 28),
+            TossButton(
+              label: '다시 시도하기',
+              onTap: _loadScenarios,
+              height: 52,
             ),
+            if (kDebugMode) ...[
+              const SizedBox(height: 8),
+              TossButton(
+                label: '임시 데이터로 계속하기',
+                type: TossButtonType.secondary,
+                onTap: _loadMockScenarios,
+                height: 52,
+              ),
+            ],
           ],
         ),
       );
     }
     if (_scenarios.isEmpty) {
       return const Center(
-        child: Text(
-          '시나리오를 불러올 수 없어요',
-          style: TextStyle(color: Color(0xFF6B7684)),
-        ),
+        child: Text('아직 고를 수 있는 시나리오가 없어요', style: TossText.sub),
       );
     }
     if (_isStarting) {
@@ -259,66 +208,48 @@ class _ScenarioScreenState extends State<ScenarioScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text(
-              '게임 데이터 불러오는 중...',
-              style: TextStyle(color: Color(0xFF6B7684)),
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: CircularProgressIndicator(strokeWidth: 3),
             ),
+            SizedBox(height: 20),
+            Text('그때의 시장을 불러오고 있어요', style: TossText.sub),
           ],
         ),
       );
     }
     return ListView.builder(
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 24),
       itemCount: _scenarios.length,
       itemBuilder: (context, index) {
-        return ScenarioCard(
-          scenario: _scenarios[index],
-          onTap: () => _onScenarioTap(_scenarios[index]),
+        return FadeInUp(
+          delay: Duration(milliseconds: 60 * index),
+          child: ScenarioCard(
+            scenario: _scenarios[index],
+            onTap: () => _onScenarioTap(_scenarios[index]),
+          ),
         );
       },
     );
   }
 
   Widget _buildHeader() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: const Color(0xFFEEEDFE),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: const Text(
-            '투자 서바이벌',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFF3C3489),
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        const Text(
-          '시나리오를\n선택하세요',
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF111111),
-            height: 1.2,
-          ),
-        ),
-        const SizedBox(height: 8),
-        const Text(
-          '과거의 시장 위기에서 살아남아 보세요',
-          style: TextStyle(
-            fontSize: 14,
-            color: Color(0xFF6B7684),
-            fontWeight: FontWeight.w400,
-          ),
-        ),
-      ],
+    return const FadeInUp(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('투자 서바이벌',
+              style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                  color: TossColors.blue500)),
+          SizedBox(height: 8),
+          Text('어떤 위기에서\n살아남아 볼까요?', style: TossText.title1),
+          SizedBox(height: 8),
+          Text('과거 시장으로 돌아가 내 전략을 시험해 보세요', style: TossText.sub),
+        ],
+      ),
     );
   }
 }
