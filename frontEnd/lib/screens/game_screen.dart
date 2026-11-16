@@ -89,6 +89,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   String _decisionNotice = '';
   Timer? _decisionNoticeTimer;
 
+  // (#125) 선택 라운드에 들어가면 선택지가 보이도록 스크롤, 고른 뒤에는 차트가 보이도록 맨 위로
+  //   보유 카드가 늘어나면(50·75라운드) 선택지가 화면 아래로 밀려, 스크롤해야만 보였다
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _selectorKey = GlobalKey();
+  Timer? _scrollTimer;
+
   // ── Getters ────────────────────────────────
   RoundData get _currentRound {
     final idx = _currentRoundIndex.clamp(0, _session.rounds.length - 1);
@@ -189,6 +195,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _autoTimer?.cancel();
     _bannerTimer?.cancel();
     _decisionNoticeTimer?.cancel();
+    _scrollTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -505,6 +513,27 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     _updateSkipNotice();
   }
 
+  // 선택지가 펼쳐진 뒤(등장 애니메이션 250ms) 그 위치로 스크롤
+  void _scrollToSelector() {
+    _scrollTimer?.cancel();
+    _scrollTimer = Timer(const Duration(milliseconds: 300), () {
+      final ctx = _selectorKey.currentContext;
+      if (!mounted || ctx == null) return;
+      Scrollable.ensureVisible(
+        ctx,
+        duration: TossMotion.slow,
+        curve: TossMotion.enter,
+      );
+    });
+  }
+
+  void _scrollToTop() {
+    _scrollTimer?.cancel();
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(0,
+        duration: TossMotion.slow, curve: TossMotion.enter);
+  }
+
   // (#125) 이번 라운드에 조건은 맞았지만 실행되지 못한 카드 → 같은 이유로는 처음 한 번만 알림
   void _updateSkipNotice() {
     final round = _session.getRound(_currentRoundIndex);
@@ -571,6 +600,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _resetAiState();
           });
           _onRoundEntered();
+          _scrollToSelector();
         }
       } else {
         setState(() {
@@ -701,6 +731,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _resetAiState();
     });
     _updateSkipNotice();
+    _scrollToTop();
     // (12주차) 고르면 재생 버튼을 누르지 않아도 바로 다음 라운드로 진행
     _startAutoPlay();
   }
@@ -726,6 +757,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _buildHeader(),
             Expanded(
               child: SingleChildScrollView(
+                controller: _scrollController,
                 padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -756,6 +788,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       alignment: Alignment.topCenter,
                       child: _waiting
                           ? Padding(
+                              key: _selectorKey,
                               padding: const EdgeInsets.only(top: 8),
                               child: FadeInUp(
                                 key: ValueKey('selector-$_currentRound1'),
