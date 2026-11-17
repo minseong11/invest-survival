@@ -1,7 +1,9 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import '../models/market.dart';
 import '../models/round_data.dart';
 import '../theme/toss_theme.dart';
+import 'market_chips.dart';
 
 // =============================================
 // (#125) 세로축 범위·눈금 계산
@@ -42,6 +44,8 @@ class StockChart extends StatefulWidget {
   final Set<int> cardIndexes;
   // (#125) 위기 대응을 한 라운드의 위치(0부터) — 내 자산 선 위에 주황 네모로 표시
   final Set<int> decisionIndexes;
+  // (#125) S&P500 말고 겹쳐 그릴 종목 (차트 아래 종목 칩에서 고름). 색은 kTickerColors
+  final Set<String> extraTickers;
 
   const StockChart({
     super.key,
@@ -49,6 +53,7 @@ class StockChart extends StatefulWidget {
     this.initialAsset = 10000000,
     this.cardIndexes = const {},
     this.decisionIndexes = const {},
+    this.extraTickers = const {},
   });
 
   @override
@@ -56,26 +61,22 @@ class StockChart extends StatefulWidget {
 }
 
 class _StockChartState extends State<StockChart> {
-  double? get _spxBase {
-    for (final r in widget.rounds) {
-      final p = r.getPrice('^SPX');
-      if (p != null && p.close > 0) return p.close;
-    }
-    return null;
-  }
+  static const _assetKey = '내 자산';
 
-  List<FlSpot> get _spxSpots {
-    final base = _spxBase;
-    if (base == null) return [];
-    final spots = <FlSpot>[];
-    for (int i = 0; i < widget.rounds.length; i++) {
-      final p = widget.rounds[i].getPrice('^SPX');
-      if (p != null) {
-        spots.add(FlSpot(i.toDouble(), (p.close - base) / base * 100));
-      }
-    }
-    return spots;
-  }
+  // 종목의 첫 가격 대비 등락률(%) 선
+  List<FlSpot> _tickerSpots(String ticker) => [
+        for (final (i, rate) in changeSeries(widget.rounds, ticker))
+          FlSpot(i.toDouble(), rate),
+      ];
+
+  List<FlSpot> get _spxSpots => _tickerSpots('^SPX');
+
+  // 겹쳐 그릴 종목 (화면 순서대로, 가격이 없는 종목은 뺀다)
+  List<(String, List<FlSpot>)> get _extraSeries => [
+        for (final t in kMarketTickers)
+          if (t != '^SPX' && widget.extraTickers.contains(t))
+            if (_tickerSpots(t) case final spots when spots.isNotEmpty) (t, spots),
+      ];
 
   List<FlSpot> get _assetSpots {
     final spots = <FlSpot>[];
@@ -102,7 +103,11 @@ class _StockChartState extends State<StockChart> {
 
   ChartAxis get _axis {
     double min = 0, max = 0;
-    for (final s in [..._spxSpots, ..._assetSpots]) {
+    for (final s in [
+      ..._spxSpots,
+      ..._assetSpots,
+      for (final (_, spots) in _extraSeries) ...spots,
+    ]) {
       if (s.y < min) min = s.y;
       if (s.y > max) max = s.y;
     }
@@ -120,7 +125,14 @@ class _StockChartState extends State<StockChart> {
 
     final spxSpots   = _spxSpots;
     final assetSpots = _assetSpots;
+    final extras     = _extraSeries;
     final hasAsset   = assetSpots.isNotEmpty;
+    // lineBarsData 순서와 같은 이름 목록 (툴팁에서 선을 구분할 때 사용)
+    final seriesKeys = [
+      for (final (t, _) in extras) t,
+      if (spxSpots.isNotEmpty) '^SPX',
+      if (hasAsset) _assetKey,
+    ];
     // 내 자산 선: 지금 수익이면 빨강, 손실이면 파랑 (토스증권 방식)
     final assetColor = hasAsset ? TossColors.rate(assetSpots.last.y) : TossColors.red500;
     final axis       = _axis;
@@ -161,27 +173,51 @@ class _StockChartState extends State<StockChart> {
                 enabled: true,
                 touchTooltipData: LineTouchTooltipData(
                   getTooltipColor: (_) => TossColors.grey800,
+                  // (#125) 겹쳐 본 종목이 많으면 툴팁이 넓어져 화면 오른쪽 끝에서 잘리지 않게
+                  fitInsideHorizontally: true,
                   getTooltipItems: (spots) {
+                    // (#125) 겹쳐 그린 종목이 있으면 선마다 한 줄씩 (색 점 + 이름 + 등락률)
                     return spots.map((spot) {
-                      final label = spot.barIndex == 0
-                          ? 'S&P500'
-                          : '내 자산';
+                      final key = spot.barIndex < seriesKeys.length
+                          ? seriesKeys[spot.barIndex]
+                          : '';
+                      final isAsset = key == _assetKey;
+                      final label = isAsset ? _assetKey : tickerName(key);
+                      final dot = isAsset
+                          ? assetColor
+                          : (kTickerColors[key] ?? TossColors.grey400);
                       final val = spot.y;
                       return LineTooltipItem(
-                        '$label\n${val >= 0 ? '+' : ''}${val.toStringAsFixed(2)}%',
-                        TextStyle(
-                          color: spot.barIndex == 0
-                              ? TossColors.grey300
-                              : Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
+                        '● ',
+                        TextStyle(color: dot, fontSize: 11),
+                        textAlign: TextAlign.left,
+                        children: [
+                          TextSpan(
+                            text: '$label ${val >= 0 ? '+' : ''}${val.toStringAsFixed(2)}%',
+                            style: TextStyle(
+                              color: isAsset ? Colors.white : TossColors.grey200,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       );
                     }).toList();
                   },
                 ),
               ),
               lineBarsData: [
+                // (#125) 겹쳐 보는 종목 — 내 자산·S&P500 아래에 얇은 실선
+                for (final (t, spots) in extras)
+                  LineChartBarData(
+                    spots: spots,
+                    color: kTickerColors[t] ?? TossColors.grey500,
+                    barWidth: 1.6,
+                    isCurved: true,
+                    curveSmoothness: 0.3,
+                    dotData: const FlDotData(show: false),
+                    belowBarData: BarAreaData(show: false),
+                  ),
                 // S&P 500
                 if (spxSpots.isNotEmpty)
                   LineChartBarData(

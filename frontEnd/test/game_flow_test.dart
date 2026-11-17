@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_application_1/screens/scenario_screen.dart';
 import 'package:flutter_application_1/theme/toss_theme.dart';
 import 'package:flutter_application_1/widgets/decision_selector.dart';
+import 'package:flutter_application_1/widgets/market_chips.dart';
+import 'package:flutter_application_1/widgets/stock_chart.dart';
 import 'package:flutter_application_1/widgets/toss/toss_widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -151,6 +153,41 @@ void main() {
     );
 
     // 남은 타이머(뉴스 알림·알림 칸) 정리
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('갖고 있지 않은 종목도 흐름을 보고, 눌러서 차트에 겹쳐 볼 수 있다', (tester) async {
+    final fake = FakeGameService();
+    await _pumpApp(tester, fake);
+    await _tap(tester, find.text('테스트 위기'));
+    await _tap(tester, find.text('황금 적립'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+    await _playUntil(tester, find.text('대응을 골라주세요'));           // 10라운드
+
+    // 차트 아래 종목 칩: 금만 샀지만 나머지 종목도 게임 시작 후 등락이 보인다
+    Finder chip(String name) =>
+        find.descendant(of: find.byType(MarketChips), matching: find.text(name));
+    for (final name in ['S&P500', '나스닥100', '금', '원유', '애플', '미국 장기채']) {
+      expect(chip(name), findsOneWidget, reason: name);
+    }
+
+    // 칩을 누르면 그 종목 선이 차트에 겹쳐지고, 다시 누르면 사라진다
+    StockChart chart() => tester.widget<StockChart>(find.byType(StockChart));
+    expect(chart().extraTickers, isEmpty);
+    await _tap(tester, chip('금'));
+    await _tap(tester, chip('원유'));
+    expect(chart().extraTickers, {'XAUUSD', 'USO'});
+    await _tap(tester, chip('금'));
+    expect(chart().extraTickers, {'USO'});
+
+    // 25라운드 카드 선택지: 카드가 사고파는 종목의 게임 시작 후 등락 (금 카드는 GLD → 서버 가격 XAUUSD)
+    await _tap(tester, find.text('버틴다'));
+    await _tap(tester, find.text('이렇게 할게요'));
+    await _playUntil(tester, find.text('전략을 골라주세요'));
+    expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
+    expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
+    expect(find.text('+4.6%'), findsNWidgets(2));                      // 금 칩 + 금 피난처 (1→24라운드)
+
     await tester.pump(const Duration(seconds: 6));
   });
 

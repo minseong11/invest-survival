@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/market.dart';
 import '../models/card_info.dart';
 import '../models/holding.dart';
 import '../models/round_data.dart';
@@ -79,7 +80,7 @@ List<HoldingCardInfo> extractHoldingCards({
         ? rounds[currentRoundIndex]
         : null;
     final changeRate =
-        currentRound?.getPrice(card.ticker)?.changeRate ?? 0.0;
+        currentRound?.getPrice(priceTicker(card.ticker))?.changeRate ?? 0.0;
 
     holdings.add(HoldingCardInfo(
       cardId:            cardId,

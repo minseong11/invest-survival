@@ -187,7 +187,7 @@ public class GameService {
                 scenario.getTicker(), priceList.get(0).getTradeDate().toString()
         );
 
-        // 1라운드 가격은 시나리오 기준 종목과 관계없이 S&P500으로 반환
+        // 라운드 기준 날짜는 시나리오 기준 종목과 관계없이 S&P500 거래일
         // (2라운드 이후 계산과 같은 기준 — 닷컴(^NDX)에서 차트 첫 점이 빠지던 문제 수정)
         PriceTable prices = loadPrices(session.getGameStartDate());
         if (prices.spx.isEmpty()) {
@@ -201,18 +201,17 @@ public class GameService {
         sessionRepository.save(session);
 
         StockPrice first = prices.spx.get(0);
-        Map<String, Object> priceData = new LinkedHashMap<>();
-        priceData.put("ticker", "^SPX");
-        priceData.put("open", first.getOpen());
-        priceData.put("close", first.getClose());
-        priceData.put("high", first.getHigh());
-        priceData.put("low", first.getLow());
-        priceData.put("changeRate", 0.0);
+        // (#125) 1라운드 가격: 그날 가격이 있는 모든 종목 (기존: S&P500만)
+        List<Map<String, Object>> firstPrices = new ArrayList<>();
+        for (String ticker : TICKERS) {
+            StockPrice p = "^SPX".equals(ticker) ? first : prices.at(ticker, 0);
+            if (p != null) firstPrices.add(priceEntry(ticker, p, 0.0));
+        }
 
         Map<String, Object> firstRound = new LinkedHashMap<>();
         firstRound.put("round", 1);
         firstRound.put("date", first.getTradeDate().toString());
-        firstRound.put("priceData", List.of(priceData));
+        firstRound.put("priceData", firstPrices);
         firstRound.put("holdings", new ArrayList<>());   // 시작 시 보유 종목 없음
         firstRound.put("cash", INITIAL_ASSET);
         firstRound.put("cashWeight", 100.0);
@@ -1061,21 +1060,14 @@ public class GameService {
             long roundAsset = pf.cash + (long) holdingsValue(pf, prices, i);
             double returnRate = (double) (roundAsset - initialAsset) / initialAsset * 100;
 
-            // 화면 표시용 가격: S&P500은 항상, 나머지는 보유 중인 종목만
+            // 화면 표시용 가격: 그날 가격이 있는 모든 종목 (상장 전 종목은 빠진다)
+            // (#125) 기존에는 S&P500과 보유 중인 종목만 보내, 갖고 있지 않은 종목은 흐름을 보고 고를 수 없었다
             List<Map<String, Object>> priceDataList = new ArrayList<>();
             for (String ticker : TICKERS) {
                 StockPrice current = prices.at(ticker, i);
-                boolean isSpx = "^SPX".equals(ticker);
-                if (current == null || (!isSpx && pf.shares(ticker) <= 0)) continue;
-                Map<String, Object> data = new LinkedHashMap<>();
-                data.put("ticker", ticker);
-                data.put("open", current.getOpen());
-                data.put("close", current.getClose());
-                data.put("high", current.getHigh());
-                data.put("low", current.getLow());
-                // 화면 표시용 등락률 (기존 응답 형식 유지: 계산할 수 없으면 0.0)
-                data.put("changeRate", calcChangeRate(prices.at(ticker, i - 1), current));
-                priceDataList.add(data);
+                if (current == null) continue;
+                // 등락률은 기존 응답 형식 유지: 계산할 수 없으면 0.0
+                priceDataList.add(priceEntry(ticker, current, calcChangeRate(prices.at(ticker, i - 1), current)));
             }
 
             Map<String, Object> roundMap = new LinkedHashMap<>();
@@ -1138,6 +1130,18 @@ public class GameService {
         if (prev == null || current == null || prev.getClose() <= 0) return null;
         double rate = (current.getClose() - prev.getClose()) / prev.getClose() * 100;
         return round2(rate);
+    }
+
+    // 화면 표시용 가격 한 줄 (라운드 응답의 priceData 항목)
+    private Map<String, Object> priceEntry(String ticker, StockPrice p, double changeRate) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("ticker", ticker);
+        data.put("open", p.getOpen());
+        data.put("close", p.getClose());
+        data.put("high", p.getHigh());
+        data.put("low", p.getLow());
+        data.put("changeRate", changeRate);
+        return data;
     }
 
     private double calcChangeRate(StockPrice prev, StockPrice current) {

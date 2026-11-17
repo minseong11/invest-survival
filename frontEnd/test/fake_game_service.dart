@@ -29,6 +29,29 @@ class FakeGameService extends GameService {
 
   double _spx(int round) => 1000 * (1 - 0.3 * sin(round / 100 * pi / 2)); // 100라운드 동안 30% 하락
 
+  // 실제 서버처럼 라운드마다 모든 종목 가격을 보낸다 (갖고 있지 않은 종목 포함)
+  //   금은 라운드마다 0.2%씩 오르게 해 두어 24라운드에 +4.6%
+  Map<String, double> _closes(int round) => {
+        '^SPX': _spx(round),
+        '^NDX': 2000 * (1 - 0.4 * sin(round / 100 * pi / 2)),
+        'XAUUSD': 800 * (1 + 0.002 * (round - 1)),
+        'USO': 100 * (1 - 0.005 * (round - 1)),
+        'AAPL': 150 * (1 - 0.003 * (round - 1)),
+        'TLT': 90 * (1 + 0.001 * (round - 1)),
+      };
+
+  List<Map<String, dynamic>> _prices(int round) => [
+        for (final e in _closes(round).entries)
+          {
+            'ticker': e.key,
+            'open': e.value,
+            'close': e.value,
+            'high': e.value,
+            'low': e.value,
+            'changeRate': -0.5,
+          }
+      ];
+
   Map<String, dynamic> _news(int round, String level, String headline) => {
         'date': _date(round),
         'headline': headline,
@@ -50,16 +73,7 @@ class FakeGameService extends GameService {
     return {
       'round': round,
       'date': _date(round),
-      'priceData': [
-        {
-          'ticker': '^SPX',
-          'open': _spx(round),
-          'close': _spx(round),
-          'high': _spx(round),
-          'low': _spx(round),
-          'changeRate': -0.5,
-        }
-      ],
+      'priceData': _prices(round),
       'roundAsset': asset,
       'returnRate': double.parse(rate.toStringAsFixed(2)),
       'triggeredCards': round % 7 == 0 && held > 0 ? [selections.values.first] : <int>[],
@@ -164,9 +178,7 @@ class FakeGameService extends GameService {
         {
           'round': 1,
           'date': _date(1),
-          'priceData': [
-            {'ticker': '^SPX', 'open': 1000.0, 'close': 1000.0, 'high': 1000.0, 'low': 1000.0, 'changeRate': 0.0}
-          ],
+          'priceData': _prices(1),
           'holdings': [],
           'cash': 10000000,
           'cashWeight': 100.0,

@@ -6,6 +6,7 @@ import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
 import '../models/decision.dart';
+import '../models/market.dart';
 import '../models/news_item.dart';
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
@@ -13,6 +14,7 @@ import '../widgets/briefing_card.dart';
 import '../widgets/decision_selector.dart';
 import '../widgets/stock_chart.dart';
 import '../widgets/holdings_widget.dart';
+import '../widgets/market_chips.dart';
 import '../widgets/news_banner.dart';
 import '../widgets/toss/toss_widgets.dart';
 import '../theme/toss_theme.dart';
@@ -74,6 +76,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // 카드 선택 화면에서 고른 카드 (확정 버튼을 눌러야 제출)
   int? _pendingCardId;
+  // (#125) 차트에 겹쳐 보는 종목 (차트 아래 종목 칩에서 켜고 끔)
+  Set<String> _overlayTickers = {};
 
   // (#125) 위기 대응
   DecisionPrompt? _decisionPrompt;          // 다음 위기 대응 라운드의 속보 (서버 nextDecision)
@@ -1029,7 +1033,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           initialAsset:    initial,
                           cardIndexes:     _cardIndexes,
                           decisionIndexes: _decisionIndexes,
+                          extraTickers:    _overlayTickers,
                         ),
+                      ),
+                      // (#125) 종목별 흐름 — 갖고 있지 않은 종목도 게임 시작 후 등락을 보고, 눌러서 차트에 겹쳐 본다
+                      MarketChips(
+                        rounds:   _chartData,
+                        selected: _overlayTickers,
+                        onToggle: (t) => setState(() {
+                          final next = {..._overlayTickers};
+                          if (!next.remove(t)) next.add(t);
+                          _overlayTickers = next;
+                        }),
                       ),
                     ],
                   ),
@@ -1258,6 +1273,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         _aiRequested && _aiState == AiState.done && contribRaw != null;
     final contribution = contribRaw ?? 0.0;
     final selected     = _pendingCardId == card.id;
+    // (#125) 이 카드가 사고파는 종목이 게임 시작 후 얼마나 움직였는지 (갖고 있지 않아도 보고 고를 수 있게)
+    //        1라운드는 위의 시작 전 브리핑에 직전 20거래일 등락이 있다
+    final moved = _notStarted ? null : changeSinceStart(_chartData, card.ticker);
 
     return Pressable(
       onTap: _isSubmitting
@@ -1305,6 +1323,25 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   const SizedBox(height: 2),
                   Text(card.description.replaceAll('\n', ' '),
                       style: TossText.caption),
+                  if (moved != null) ...[
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text('${tickerName(card.ticker)} · 게임 시작 후 ',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TossText.small),
+                        ),
+                        Text(formatSigned(moved),
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: TossColors.rate(moved),
+                                fontFeatures: const [FontFeature.tabularFigures()])),
+                      ],
+                    ),
+                  ],
                   // (#125) 팔 S&P500이 없으면 이 카드는 발동해도 아무 일도 일어나지 않는다
                   if (card.id == 8 && !_holdsSpx) ...[
                     const SizedBox(height: 3),

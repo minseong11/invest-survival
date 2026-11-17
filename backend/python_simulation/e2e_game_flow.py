@@ -4,7 +4,8 @@ e2e_game_flow.py — 실제 게임 흐름을 API로 끝까지 진행하며 확�
 Spring Boot(8080)와 FastAPI(8000)가 켜진 상태에서, 시나리오마다 게임을 시작해
 카드 선택·위기 대응을 무작위로 고르며 100라운드까지 진행하고 아래를 확인한다.
   1) 이벤트 순서: 카드 선택(1·25·50·75) + 위기 대응 라운드에서만 멈추고, 1~100라운드가 빠짐없이 온다
-  2) 라운드 응답: 자산·수익률, 보유 자산 비중 + 현금 비중 = 100%, 발동·건너뜀 정보
+  2) 라운드 응답: 자산·수익률, 보유 자산 비중 + 현금 비중 = 100%, 발동·건너뜀 정보,
+     종목 가격(priceData)은 보유 여부와 관계없이 그날 가격이 있는 모든 종목 (1라운드 포함)
   3) 잘못된 요청은 400 (같은 라운드 재선택, 제시되지 않은 카드, 위기 대응 라운드에 카드 선택, 빈 요청 등)
   4) 실제 게임의 라운드별 자산 = Python run_game(같은 카드·같은 위기 대응)의 라운드별 자산 (원 단위까지)
   5) 사후 분석: 내 결과가 실제 게임 결과와 같고, 등급·최대 낙폭·카드별 성적표·위기 대응 돌아보기가 온다
@@ -32,6 +33,8 @@ from game_logic import run_game, load_price_data, CARD_SELECT_ROUNDS, DECISION_C
 JAVA = os.environ.get('JAVA_URL', 'http://localhost:8080')
 GRADES = {'S', 'A', 'B', 'C', 'D'}
 SKIP_REASONS = {'CASH_LOW', 'MAX_REACHED', 'NO_HOLDINGS', 'NO_PRICE'}
+TICKERS = ['^SPX', '^NDX', 'XAUUSD', 'USO', 'AAPL', 'TLT']     # 서버 GameService.TICKERS와 같은 순서
+PY_TICKER = {'XAUUSD': 'GLD'}                                   # Python game_logic은 금을 GLD로 부른다
 
 failures = []
 
@@ -53,11 +56,27 @@ def expect_400(path, body, what):
     check(ok, f'{what}: 400 + 메시지여야 하는데 {r.status_code} {r.text[:120]}')
 
 
-def check_rounds(rounds, expected_from, expected_to):
+def listed_at(price_data, index):
+    """그 라운드(0부터)에 가격이 있는 종목 — 상장 전 종목은 Python 쪽에서도 None"""
+    return {t for t in TICKERS if price_data['close'][PY_TICKER.get(t, t)][index] is not None}
+
+
+def check_prices(r, listed):
+    """그날 가격이 있는 모든 종목이 TICKERS 순서로 온다 — 갖고 있지 않은 종목도 흐름을 보고 고를 수 있게 (#125)"""
+    tickers = [p['ticker'] for p in r['priceData']]
+    check(tickers == [t for t in TICKERS if t in listed],
+          f'{r["round"]}R 종목 가격 {tickers} (그날 가격이 있는 종목 {sorted(listed)})')
+    held = {h['ticker'] for h in r['holdings']}
+    check(held <= set(tickers), f'{r["round"]}R 보유 종목 {held} 중 가격이 없는 종목')
+
+
+def check_rounds(rounds, expected_from, expected_to, price_data=None):
     numbers = [r['round'] for r in rounds]
     check(numbers == list(range(expected_from, expected_to + 1)),
           f'라운드 범위 {expected_from}~{expected_to}여야 하는데 {numbers[:3]}…{numbers[-3:]}')
     for r in rounds:
+        if price_data is not None:
+            check_prices(r, listed_at(price_data, r['round'] - 1))
         weight = sum(h['weight'] for h in r['holdings']) + r['cashWeight']
         check(abs(weight - 100.0) < 0.011, f'{r["round"]}R 비중 합 {weight}')
         check(r['roundAsset'] > 0 and isinstance(r['returnRate'], (int, float)), f'{r["round"]}R 자산·수익률 형식')
@@ -74,7 +93,9 @@ def play_one(scenario, rng):
     decision_rounds = start['decisionRounds']
     start_date = start['rounds'][0]['date']
     base_ticker = '^NDX' if start['buyMoreTarget'].startswith('나스닥') else '^SPX'
+    price_data = load_price_data(start_date)
     print(f'  {title}: 세션 {sid}, 위기 대응 라운드 {decision_rounds}, 시작일 {start_date}')
+    check_prices(start['rounds'][0], listed_at(price_data, 0))     # 1라운드도 모든 종목 가격
 
     check(start['briefing']['intro'], '시작 전 브리핑 배경 설명이 비어 있음')
     check(len(start['briefing']['assets']) >= 2, '시작 전 브리핑 종목 등락이 없음')
@@ -134,7 +155,7 @@ def play_one(scenario, rng):
             decisions[event_round] = choice
 
         data = res.json()['data']
-        check_rounds(data['rounds'], event_round, end)
+        check_rounds(data['rounds'], event_round, end, price_data)
         all_rounds += data['rounds']
         next_round, next_type = data['nextEventRound'], data['nextEventType']
         options = data['nextCardOptions'] or []
@@ -147,7 +168,7 @@ def play_one(scenario, rng):
     expect_400('/game/round/action', {'sessionId': sid, 'round': 100, 'cardId': 1}, '끝난 게임에 선택')
 
     # 4) Python과 라운드별 자산 비교
-    py = run_game(start_date, selections, price_data=load_price_data(start_date),
+    py = run_game(start_date, selections, price_data=price_data,
                   decisions=decisions, base_ticker=base_ticker)
     java_assets = [r['roundAsset'] for r in all_rounds]
     py_assets = [r['roundAsset'] for r in py['rounds']]

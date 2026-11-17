@@ -429,6 +429,42 @@ class GameServiceTest {
     }
 
     @Test
+    void 라운드마다_보유하지_않은_종목의_가격도_보내고_상장_전_종목은_뺀다() {
+        // 원유(USO)는 30라운드 날짜부터 상장된 것으로 둔다
+        LocalDate listed = dateOfRound(30);
+        prices.put("USO", list("USO").stream().filter(p -> !p.getTradeDate().isBefore(listed)).toList());
+
+        Map<String, Object> start = service.startGame(1);
+        String sid = (String) start.get("sessionId");
+        // 1라운드: 아직 아무것도 갖고 있지 않아도 상장된 모든 종목의 가격이 온다
+        assertThat(tickers(rounds(start).get(0))).containsExactly("^SPX", "^NDX", "XAUUSD", "AAPL", "TLT");
+
+        // 무엇을 골라도 갖고 있지 않은 종목까지 모두 온다 (기존: S&P500 + 보유 종목만)
+        @SuppressWarnings("unchecked")
+        List<Integer> options = (List<Integer>) start.get("firstCardOptions");
+        Map<String, Object> r1 = service.selectCard(sid, 1, options.get(0));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> r25 = service.selectCard(sid, 25, ((List<Integer>) r1.get("nextCardOptions")).get(0));
+        List<Map<String, Object>> played = new ArrayList<>(rounds(r1));
+        played.addAll(rounds(r25));
+        assertThat(played).hasSize(49);                 // 1~49라운드 (30라운드 전후 모두 포함)
+        for (Map<String, Object> round : played) {
+            int n = (Integer) round.get("round");
+            if (n < 30) {
+                assertThat(tickers(round)).as(n + "라운드").containsExactly("^SPX", "^NDX", "XAUUSD", "AAPL", "TLT");
+            } else {
+                assertThat(tickers(round)).as(n + "라운드").containsExactlyElementsOf(TICKERS);
+            }
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<String> tickers(Map<String, Object> round) {
+        return ((List<Map<String, Object>>) round.get("priceData")).stream()
+                .map(p -> (String) p.get("ticker")).toList();
+    }
+
+    @Test
     void 카드_선택과_위기_대응_라운드에서만_멈추고_100라운드까지_진행된다() {
         addNews(1, 10, "danger", true);
         addNews(2, 60, "positive", true);
