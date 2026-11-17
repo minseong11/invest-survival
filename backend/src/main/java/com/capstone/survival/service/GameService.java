@@ -21,6 +21,8 @@ import org.springframework.web.client.RestTemplate;
 import java.time.LocalDate;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ForkJoinPool;
 import java.util.stream.Collectors;
 
 /**
@@ -49,6 +51,10 @@ public class GameService {
 
     @Value("${ai.server.url:http://localhost:8000}")
     private String aiServerUrl;
+
+    // (#125) 전체 조합 미리 계산 요청(prewarmAnalysis)을 보내는 곳 — 게임 응답이 기다리지 않도록 다른 스레드에서 보낸다.
+    //        테스트에서는 바로 실행하는 실행기로 바꿔, 이 요청이 테스트의 가짜 AI 서버 설정과 동시에 일어나지 않게 한다
+    private Executor prewarmExecutor = ForkJoinPool.commonPool();
 
     private static final List<Integer> CARD_SELECT_ROUNDS = List.of(1, 25, 50, 75);
     private static final List<Integer> AI_ROUNDS = List.of(25, 50);      // V2 예측을 제공하는 라운드
@@ -797,7 +803,7 @@ public class GameService {
             } catch (Exception ignored) {
                 // 미리 계산은 선택 사항 — 결과 화면 요청에서 다시 계산한다
             }
-        });
+        }, prewarmExecutor);
     }
 
     // 받은 후보 안 분석 결과에 카드 이름 붙이기

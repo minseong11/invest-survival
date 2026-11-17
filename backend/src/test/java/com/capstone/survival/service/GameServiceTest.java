@@ -29,6 +29,7 @@ import org.springframework.web.client.RestTemplate;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.concurrent.Executor;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -76,6 +77,10 @@ class GameServiceTest {
         service = new GameService(sessionRepository, scenarioRepository, stockPriceRepository,
                 cardRepository, newsEventRepository, restTemplate);
         ReflectionTestUtils.setField(service, "aiServerUrl", "http://ai");
+        // 미리 계산 요청을 다른 스레드가 아니라 그 자리에서 보낸다.
+        // 다른 스레드가 가짜 AI 서버(restTemplate)를 부르는 동안 테스트가 when(...)으로 응답을 바꾸면
+        // Mockito가 그 스레드의 호출에 응답을 붙여, 가끔 다른 응답이 돌아왔다 (CI에서 간헐적 실패)
+        ReflectionTestUtils.setField(service, "prewarmExecutor", (Executor) Runnable::run);
 
         for (String ticker : TICKERS) {
             setPrices(ticker, Map.of());
@@ -634,17 +639,23 @@ class GameServiceTest {
     }
 
     @Test
-    void 마지막_위기_대응이_끝나면_전체_조합_미리_계산을_요청한다() throws Exception {
+    void 마지막_위기_대응이_끝나면_전체_조합_미리_계산을_요청한다() {
         playUntilRound25();      // 위기 대응은 10라운드 하나 → 그 대응 직후 요청
-        for (int i = 0; i < 50 && !aiPaths.contains("/ai/analysis/prewarm"); i++) {
-            Thread.sleep(20);    // 응답을 기다리지 않는 비동기 호출
-        }
-        int index;
-        synchronized (aiRequests) {
-            index = aiPaths.indexOf("/ai/analysis/prewarm");
-        }
+        int index = aiPaths.indexOf("/ai/analysis/prewarm");
         assertThat(index).isGreaterThanOrEqualTo(0);
         assertThat(aiRequests.get(index).get("decisions")).isEqualTo(Map.of("10", "BUY_MORE"));
         assertThat(aiRequests.get(index).get("startDate")).isEqualTo(GAME_START.toString());
+    }
+
+    @Test
+    void 미리_계산_요청은_위기_대응_응답을_기다리게_하지_않는다() {
+        List<Runnable> queued = new ArrayList<>();
+        ReflectionTestUtils.setField(service, "prewarmExecutor", (Executor) queued::add);
+
+        playUntilRound25();                                         // 위기 대응 응답은 이미 돌아왔지만
+        assertThat(aiPaths).doesNotContain("/ai/analysis/prewarm");  // 미리 계산 요청은 아직 보내지 않았고
+        assertThat(queued).hasSize(1);                              // 실행기에 따로 넘겨져 있다
+        queued.forEach(Runnable::run);
+        assertThat(aiPaths).contains("/ai/analysis/prewarm");
     }
 }
