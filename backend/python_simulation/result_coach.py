@@ -13,6 +13,7 @@ result_coach.py — 사후 분석 "AI 코치 한마디" (#125)
 import re
 from typing import List
 
+from display_format import fixed
 from verify_feedback import verify_feedback, CARD_FACTS
 
 DECISION_LABELS = {'HOLD': '버틴다', 'SELL_HALF': '절반 판다', 'BUY_MORE': '더 산다'}
@@ -26,12 +27,13 @@ ABSOLUTE_WORDS = ('반드시', '무조건', '확실', '보장', '절대')
 MAX_TIP_LENGTH = 120
 
 
+# 화면에 같은 값이 앱의 숫자(수익률 막대, 카드별 성적표 등)와 나란히 나오므로 앱과 같은 반올림을 쓴다
 def _pct(v: float) -> str:
-    return f'{abs(v):.1f}%'
+    return f'{fixed(abs(v))}%'
 
 
 def _pp(v: float) -> str:
-    return f'{abs(v):.1f}%p'
+    return f'{fixed(abs(v))}%p'
 
 
 def _summary(analysis: dict) -> str:

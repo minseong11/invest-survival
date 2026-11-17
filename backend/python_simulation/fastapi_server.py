@@ -26,6 +26,7 @@ from pydantic import BaseModel
 import anthropic
 from backtest import run_backtest, prewarm
 import result_coach
+from display_format import fixed
 from verify_feedback import verify_feedback, CARD_FACTS
 from data_loader import load_all
 import pandas as pd
@@ -424,7 +425,7 @@ def market_line(req) -> str:
     if abs(r) < 0.5:
         move = '시작 때와 비슷해요'
     else:
-        move = f'시작 후 {abs(r):.1f}% {"하락" if r < 0 else "상승"}'
+        move = f'시작 후 {fixed(abs(r))}% {"하락" if r < 0 else "상승"}'
     return f'{move} · 하루 등락은 {volatility_words(req.spxVolatilitySoFar)}'
 
 

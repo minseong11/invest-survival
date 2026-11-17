@@ -48,6 +48,8 @@ def test_fact_lines_use_analysis_numbers():
     (12.3, -6.8, '같은 기간 S&P500은 6.8% 떨어졌고, 내 자산은 12.3% 늘었어요.'),
     (-2.0, 7.3, '같은 기간 S&P500은 7.3% 올랐고, 내 자산은 2.0% 줄었어요.'),
     (0.0, 0.01, '같은 기간 S&P500은 거의 그대로였고, 내 자산은 거의 그대로였어요.'),
+    # 정확히 절반인 값은 앱의 숫자와 같은 쪽으로 (앱의 수익률 막대는 -13.3%, 21.3%)
+    (-13.25, 21.25, '같은 기간 S&P500은 21.3% 올랐고, 내 자산은 13.3% 줄었어요.'),
 ])
 def test_summary_directions(mine, market, expected):
     assert rc.fact_lines(analysis(CARDS4, mine=mine, market=market))[0] == f'요약: {expected}'

@@ -150,5 +150,16 @@ def test_feedback_falls_back_when_response_has_no_text(client, llm):
     assert heads(r['feedback'])[:3] == ['지금 시장', '이 카드는', '그래서']
 
 
+@pytest.mark.parametrize('spx_return, expected', [
+    (-17.27, '시작 후 17.3% 하락'),
+    (-13.25, '시작 후 13.3% 하락'),     # 정확히 절반 → 앱과 같은 쪽 (Python 기본 서식은 13.2)
+    (4.25, '시작 후 4.3% 상승'),
+    (0.3, '시작 때와 비슷해요'),
+])
+def test_market_line_rounds_like_app(spx_return, expected):
+    req = type('Req', (), {'spxReturnSoFar': spx_return, 'spxVolatilitySoFar': 1.0})()
+    assert fs.market_line(req).startswith(expected)
+
+
 def test_health(client):
     assert client.get('/').json()['status'] == 'ok'
