@@ -496,8 +496,9 @@ Future<void> showTossSheet(
     builder: (ctx) => SafeArea(
       top: false,
       child: ConstrainedBox(
+        // (#125) 0.8 → 0.88: AI 설명 시트에서 카드 규칙이 두 줄이 되면 마지막 안내 문장이 버튼 위에서 잘려 보였다
         constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            maxHeight: MediaQuery.of(ctx).size.height * 0.88),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
           child: Column(
