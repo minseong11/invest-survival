@@ -23,7 +23,10 @@ class FakeGameService extends GameService {
   final Map<int, int> selections = {};
   final Map<int, String> decisions = {};
 
-  FakeGameService({this.decisionRounds = const [10, 60]});
+  // 카드를 고른 뒤 라운드의 현금 비중(%) — 5보다 작으면 앱이 '현금 부족' 안내를 띄운다
+  final double heldCashWeight;
+
+  FakeGameService({this.decisionRounds = const [10, 60], this.heldCashWeight = 70.0});
 
   List<int> get _events => [...cardRounds, ...decisionRounds]..sort();
 
@@ -98,7 +101,7 @@ class FakeGameService extends GameService {
             ]
           : <Map<String, dynamic>>[],
       'cash': hasSpx ? 7000000 : 10000000,
-      'cashWeight': hasSpx ? 70.0 : 100.0,
+      'cashWeight': hasSpx ? heldCashWeight : 100.0,
       'news': round == 5
           ? [_news(5, 'caution', '테스트 주의 뉴스')]
           : <Map<String, dynamic>>[],

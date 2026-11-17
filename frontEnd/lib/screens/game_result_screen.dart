@@ -629,9 +629,13 @@ class _GameResultScreenState extends State<GameResultScreen> {
   Widget _buildRoundReviewCard(OfferedAnalysis? o) {
     final mine = _analysis!.playerResult;
     int bestRounds = 0;
+    int tieRounds = 0;   // (#125) 어떤 카드를 골라도 같았던 라운드는 "최선"으로 세지 않는다
     if (o != null) {
       bestRounds = _selectRounds
-          .where((r) => o.roundAt(r) != null && o.roundAt(r)!.better == null)
+          .where((r) => o.roundAt(r) != null && o.roundAt(r)!.better == null && !o.roundAt(r)!.noDifference)
+          .length;
+      tieRounds = _selectRounds
+          .where((r) => o.roundAt(r) != null && o.roundAt(r)!.noDifference)
           .length;
     }
 
@@ -644,7 +648,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
             '라운드별로 돌아보기',
             trailing: o == null
                 ? null
-                : Text('4번 중 $bestRounds번 최선', style: TossText.caption),
+                : Text(
+                    tieRounds > 0
+                        ? '4번 중 $bestRounds번 최선 · $tieRounds번 차이 없음'
+                        : '4번 중 $bestRounds번 최선',
+                    style: TossText.caption),
           ),
           for (int i = 0; i < _selectRounds.length; i++) ...[
             if (i > 0) Container(height: 1, color: TossColors.grey100),
@@ -669,6 +677,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
     final aiId    = widget.aiPicks[round];
     final better  = ra?.better;
     final bestId  = ra == null ? null : (better?.cardId ?? ra.playerCardId);
+    final tie     = ra?.noDifference ?? false;
     final aiHit   = aiId != null && bestId != null && aiId == bestId;
 
     return Padding(
@@ -685,7 +694,12 @@ class _GameResultScreenState extends State<GameResultScreen> {
                       color: TossColors.grey500)),
               const Spacer(),
               if (ra != null)
-                better == null
+                tie
+                    ? const TossBadge(
+                        label: '차이 없음',
+                        bg: TossColors.grey100,
+                        fg: TossColors.grey600)
+                    : better == null
                     ? const TossBadge(
                         label: '✓ 최선',
                         bg: TossColors.green50,
@@ -697,7 +711,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
             ],
           ),
           const SizedBox(height: 8),
-          _labeledChip('내 선택', myCard, highlight: better == null && ra != null),
+          _labeledChip('내 선택', myCard, highlight: better == null && ra != null && !tie),
           if (aiId != null) ...[
             const SizedBox(height: 6),
             _labeledChip(
@@ -706,14 +720,14 @@ class _GameResultScreenState extends State<GameResultScreen> {
                   round: round,
                   cardId: aiId,
                   cardName: CardInfo.fromId(aiId)?.name ?? ''),
-              highlight: aiHit,
+              highlight: aiHit && !tie,
               trailing: ra == null
                   ? null
-                  : Text(aiHit ? '맞음' : '빗나감',
+                  : Text(tie ? '차이 없음' : (aiHit ? '맞음' : '빗나감'),
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: aiHit
+                          color: aiHit && !tie
                               ? TossColors.green500
                               : TossColors.grey500)),
             ),
@@ -1027,7 +1041,12 @@ class _GameResultScreenState extends State<GameResultScreen> {
                         color: TossColors.grey500)),
               ),
               const SizedBox(width: 8),
-              better == null
+              r.noDifference
+                  ? const TossBadge(
+                      label: '차이 없음',
+                      bg: TossColors.grey100,
+                      fg: TossColors.grey600)
+                  : better == null
                   ? const TossBadge(
                       label: '✓ 가장 좋은 대응',
                       bg: TossColors.green50,
@@ -1072,7 +1091,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
           ],
           const SizedBox(height: 8),
           choiceChip('내 대응', r.choice,
-              highlight: better == null,
+              highlight: better == null && !r.noDifference,
               extra: r.tradeAmount > 0 ? formatShortWon(r.tradeAmount) : null),
           if (better != null) ...[
             const SizedBox(height: 6),

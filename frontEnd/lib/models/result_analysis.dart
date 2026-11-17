@@ -149,6 +149,12 @@ class RoundAlternatives {
     );
   }
 
+  // (#125) 어떤 카드를 골라도 결과가 (화면에 보이는 자리까지) 같았던 라운드 — "최선"이 아니라 "차이 없음"
+  //        (예: 현금이 부족해 어떤 카드를 골라도 아무 일도 일어나지 않은 75라운드)
+  bool get noDifference =>
+      alternatives.isNotEmpty &&
+      alternatives.every((a) => a.diffReturnRate.abs() < kMinVisibleGap);
+
   // 내 선택보다 더 좋았던 대안 중 최고 (없으면 null → 내 선택이 이 라운드 최선)
   RoundAlternative? get better {
     if (alternatives.isEmpty) return null;
@@ -310,6 +316,11 @@ class DecisionRoundReview {
     required this.tradeAmount,
     required this.alternatives,
   });
+
+  // (#125) 어떤 대응을 했어도 결과가 같았던 속보 — "가장 좋은 대응"이 아니라 "차이 없음"
+  bool get noDifference =>
+      alternatives.isNotEmpty &&
+      alternatives.every((a) => a.diffReturnRate.abs() < kMinVisibleGap);
 
   // 내 선택보다 좋았던 다른 선택 중 최고 (없으면 null → 내 선택이 가장 좋았음)
   DecisionAlternative? get better {

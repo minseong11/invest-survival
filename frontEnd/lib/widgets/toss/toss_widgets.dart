@@ -477,6 +477,60 @@ void showTossToast(BuildContext context, String message) {
     ));
 }
 
+// (#125) 두 버튼 확인 시트 — 오른쪽(확인)을 누르면 true, 왼쪽(취소)·바깥을 누르면 false
+Future<bool> showTossConfirm(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirmLabel,
+  String cancelLabel = '취소',
+}) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: TossColors.white,
+    barrierColor: Colors.black.withValues(alpha: 0.4),
+    shape: const RoundedRectangleBorder(
+      borderRadius:
+          BorderRadius.vertical(top: Radius.circular(TossRadius.sheet)),
+    ),
+    builder: (ctx) => SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: TossText.title2),
+            const SizedBox(height: 8),
+            Text(message, style: TossText.sub),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: TossButton(
+                    label: cancelLabel,
+                    type: TossButtonType.secondary,
+                    onTap: () => Navigator.of(ctx).pop(false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TossButton(
+                    label: confirmLabel,
+                    onTap: () => Navigator.of(ctx).pop(true),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  return ok ?? false;
+}
+
 // 아래에서 올라오는 시트 (팝업 대신)
 Future<void> showTossSheet(
   BuildContext context, {

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_application_1/screens/game_screen.dart';
 import 'package:flutter_application_1/screens/scenario_screen.dart';
 import 'package:flutter_application_1/theme/toss_theme.dart';
 import 'package:flutter_application_1/widgets/decision_selector.dart';
@@ -187,6 +188,49 @@ void main() {
     expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
     expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
     expect(find.text('+4.6%'), findsNWidgets(2));                      // 금 칩 + 금 피난처 (1→24라운드)
+
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('게임 중에 뒤로 가면 한 번 묻는다 (헤더 버튼·브라우저 뒤로 가기)', (tester) async {
+    final fake = FakeGameService();
+    await _pumpApp(tester, fake);
+    await _tap(tester, find.text('테스트 위기'));
+    await _tap(tester, find.text('황금 적립'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+    await tester.pump(_tick);
+
+    // 헤더의 뒤로 버튼 → 확인 → 계속하기: 게임 화면에 그대로
+    await _tap(tester, find.byIcon(Icons.arrow_back_ios_new_rounded));
+    expect(find.text('게임을 그만둘까요?'), findsOneWidget);
+    await _tap(tester, find.text('계속하기'));
+    expect(find.text('게임을 그만둘까요?'), findsNothing);
+    expect(find.byType(GameScreen), findsOneWidget);
+
+    // 브라우저·트랙패드·안드로이드의 뒤로 가기도 같은 확인 → 그만두기: 처음 화면으로
+    await tester.binding.handlePopRoute();
+    await _settle(tester);
+    expect(find.text('게임을 그만둘까요?'), findsOneWidget);
+    await _tap(tester, find.text('그만두기'));
+    expect(find.byType(GameScreen), findsNothing);
+    expect(find.text('게임 방법'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('현금이 총자산의 5%보다 적으면 카드를 고르기 전에 알려 준다', (tester) async {
+    final fake = FakeGameService(heldCashWeight: 4.2);
+    await _pumpApp(tester, fake);
+    await _tap(tester, find.text('테스트 위기'));
+    expect(find.textContaining('현금이 총자산의 5%보다 적어요'), findsNothing);   // 1라운드는 현금 100%
+
+    await _tap(tester, find.text('황금 적립'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+    await _playUntil(tester, find.text('대응을 골라주세요'));
+    await _tap(tester, find.text('버틴다'));
+    await _tap(tester, find.text('이렇게 할게요'));
+    await _playUntil(tester, find.text('전략을 골라주세요'));             // 25라운드
+    expect(find.textContaining('현금이 총자산의 5%보다 적어요 (지금 4.2%)'), findsOneWidget);
 
     await tester.pump(const Duration(seconds: 6));
   });

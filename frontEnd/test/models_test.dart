@@ -159,6 +159,34 @@ void main() {
       expect(card(0.05).better!.cardId, 7);
     });
 
+    test('어떤 선택을 해도 결과가 같았던 라운드는 "차이 없음"', () {
+      RoundAlternatives card(List<double> diffs) => RoundAlternatives.fromJson({
+            'round': 75,
+            'offeredCards': [6, 1, 5],
+            'playerCardId': 6,
+            'alternatives': [
+              for (final (i, d) in diffs.indexed)
+                {'cardId': [1, 5][i], 'cardName': '', 'finalAsset': 0, 'finalReturnRate': 24.5 + d, 'diffReturnRate': d},
+            ],
+          });
+      expect(card([0.0, 0.0]).noDifference, isTrue);     // 현금이 부족해 어떤 카드도 아무 일도 하지 않음
+      expect(card([0.0, 0.0]).better, isNull);
+      expect(card([0.04, -0.02]).noDifference, isTrue);  // 화면에 0.0%p로 보이는 차이
+      expect(card([0.3, 0.0]).noDifference, isFalse);
+      expect(card([-0.3, 0.0]).noDifference, isFalse);   // 내 선택이 진짜로 더 나았음 → 최선
+      expect(RoundAlternatives.fromJson({'round': 1, 'offeredCards': [], 'playerCardId': 1, 'alternatives': []})
+          .noDifference, isFalse);
+
+      final decision = DecisionRoundReview.fromJson({
+        'round': 80, 'date': '2020-06-11', 'choice': 'HOLD', 'tradeAmount': 0,
+        'alternatives': [
+          {'choice': 'SELL_HALF', 'finalReturnRate': 24.5, 'diffReturnRate': 0.0},
+          {'choice': 'BUY_MORE', 'finalReturnRate': 24.5, 'diffReturnRate': 0.0},
+        ],
+      });
+      expect(decision.noDifference, isTrue);
+    });
+
     test('등급·성적표·그 후 이야기 파싱', () {
       final a = ResultAnalysis.fromJson(FakeGameService().analysisJson());
       expect(a.grade, 'C');

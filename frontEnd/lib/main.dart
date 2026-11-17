@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/scenario_screen.dart';
 import 'theme/toss_theme.dart';
+import 'widgets/app_frame.dart';
 
 void main() {
   runApp(const MyApp());
@@ -15,6 +16,8 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: '투자 서바이벌',
       theme: buildTossTheme(),
+      // (#125) 넓은 화면(노트북 브라우저 등)에서는 휴대폰 폭으로 가운데에
+      builder: (context, child) => AppFrame(child: child ?? const SizedBox.shrink()),
       home: const ScenarioScreen(),
     );
   }

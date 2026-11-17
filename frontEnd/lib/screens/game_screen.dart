@@ -110,6 +110,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   int get _currentRound1 => _currentRoundIndex + 1;
 
+  // (#125) 사는 카드가 발동하지 않는 상태 — 현금이 총자산의 5% 미만 (게임 계산과 같은 기준)
+  bool get _cashLow => !_notStarted && (_currentRound.cashWeight ?? 100) < 5;
+
+  // (#125) 자동 진행 중에는 다음 라운드 전에 숫자가 멈추도록 굴리는 시간을 줄인다
+  //        (기존 0.42초 — ×1의 라운드 간격이 0.5초라 숫자가 거의 항상 굴러가는 중이어서 읽기 어려웠다)
+  Duration get _rollDuration => _isAutoPlaying
+      ? Duration(milliseconds: 250 ~/ _speed)
+      : const Duration(milliseconds: 420);
+
   // 첫 카드를 고르기 전 (차트를 숨기고 카드 선택만 보여줌)
   bool get _notStarted => _selectedCardIds.isEmpty;
 
@@ -750,9 +759,36 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   double get _displayAsset =>
       _currentRound.roundAsset ?? _session.initialAsset.toDouble();
 
+  // (#125) 게임 중에 나가려 하면 한 번 묻는다
+  //   헤더의 뒤로 버튼, 브라우저·트랙패드의 뒤로 가기, 안드로이드 뒤로 버튼 모두 여기로 온다.
+  //   기존에는 바로 처음 화면으로 나가서 진행 중인 게임이 사라졌다 (맥 트랙패드로 옆으로 밀다가 나가기도 함)
+  Future<void> _confirmLeave() async {
+    final wasPlaying = _isAutoPlaying;
+    _stopAutoPlay();
+    final leave = await showTossConfirm(
+      context,
+      title: '게임을 그만둘까요?',
+      message: '처음 화면으로 나가면 지금 하던 게임은 이어서 할 수 없어요.',
+      confirmLabel: '그만두기',
+      cancelLabel: '계속하기',
+    );
+    if (!mounted) return;
+    if (leave) {
+      Navigator.of(context).pop();
+    } else if (wasPlaying) {
+      _startAutoPlay();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      // 첫 카드를 고르기 전에는 잃을 것이 없으니 묻지 않는다
+      canPop: _notStarted,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmLeave();
+      },
+      child: Scaffold(
       backgroundColor: TossColors.background,
       body: SafeArea(
         bottom: false,
@@ -854,6 +890,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -868,7 +905,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           Row(
             children: [
               Pressable(
-                onTap: () { _stopAutoPlay(); Navigator.pop(context); },
+                onTap: () => Navigator.maybePop(context),   // 게임 중이면 PopScope가 한 번 묻는다
                 haptic: false,
                 child: const Padding(
                   padding: EdgeInsets.all(10),
@@ -993,7 +1030,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
           const SizedBox(height: 2),
           RollingText('${formatWon(asset)}원',
-              value: asset, style: TossText.display),
+              value: asset, style: TossText.display, duration: _rollDuration),
           const SizedBox(height: 2),
           if (rate == null)
             const Text('전략 카드를 고르면 투자가 시작돼요',
@@ -1007,6 +1044,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               '${diff >= 0 ? '+' : '-'}${formatWon(diff.abs())}원 '
               '(${formatSigned(rate, digits: 2)})',
               value: asset,
+              duration: _rollDuration,
               style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w600,
@@ -1129,6 +1167,20 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ],
             ],
           ),
+
+          // (#125) 현금이 총자산의 5%보다 적으면 사는 카드는 발동하지 않는다 — 고르기 전에 알려 준다
+          //        (기존: 75라운드에 현금이 5%뿐인데 사는 카드를 골라도 미리 알 수 없었고,
+          //         결과는 "발동 0회 · 현금 부족" — 실제 플레이 영상에서 확인)
+          if (_cashLow) ...[
+            const SizedBox(height: 12),
+            InfoBox(
+              child: Text(
+                '현금이 총자산의 5%보다 적어요 (지금 ${(_currentRound.cashWeight ?? 0).toStringAsFixed(1)}%). '
+                '사는 카드는 현금이 5% 이상일 때만 작동해서, 현금이 늘기 전까지는 발동하지 않아요.',
+                style: TossText.caption.copyWith(color: const Color(0xFFC25E00)),
+              ),
+            ),
+          ],
 
           // 1·75라운드: 추천을 제공하지 않는 이유 안내
           if (_noAiReason != null) ...[
