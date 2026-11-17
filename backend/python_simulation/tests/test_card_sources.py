@@ -7,7 +7,8 @@
   3) backend/python_simulation/verify_feedback.py CARD_FACTS    — AI 설명·검증기 (test_card_facts.py가 1과 비교)
   4) frontEnd/lib/models/card_info.dart                        — 앱 화면의 카드 설명
 교수님 3주차 피드백(카드 정보가 여러 곳에 흩어져 어긋날 위험)에 따라 1↔3은 이미 검사하고 있었고,
-여기서는 1↔2(계산에 쓰는 값)와 1↔2·4의 설명 문구(조건 %·비율·횟수)를 검사한다.
+여기서는 1↔2(계산에 쓰는 값)와 1↔2·4의 설명 문구(조건 %·비율·횟수)를 검사하고,
+AI 설명 시트의 카드 규칙 칸(fastapi_server.CARD_RULE_TEXT)이 2·4의 설명과 같은 문장인지 확인한다.
 """
 import os
 import re
@@ -100,3 +101,17 @@ def test_descriptions_state_the_real_numbers(card_id, source):
 @pytest.mark.parametrize('card_id', sorted(CARDS))
 def test_app_and_server_use_the_same_name(card_id):
     assert dart_cards()[card_id]['name'] == CARDS[card_id]['name'] == sql_cards()[card_id]['name']
+
+
+TICKER_CODE = re.compile(r'\b(SPX|NDX|GLD|XAUUSD|USO|AAPL|TLT)\b')
+
+
+@pytest.mark.parametrize('card_id', sorted(CARDS))
+def test_ai_explanation_shows_the_same_rule_as_the_card(card_id):
+    """AI 설명 시트의 카드 규칙 칸 = 카드 선택지의 설명 (종목 코드 없이 쉬운 말로)"""
+    from fastapi_server import CARD_RULE_TEXT, card_rule_header
+
+    sql, dart = sql_cards()[card_id], dart_cards()[card_id]
+    assert CARD_RULE_TEXT[card_id] == sql['description'] == dart['description']
+    assert card_rule_header(card_id) == f'카드 규칙 · {dart["name"]}: {dart["description"]}'
+    assert not TICKER_CODE.search(dart['description']), dart['description']

@@ -418,6 +418,25 @@ CARD_EASY = {
     11: '기술주를 며칠 간격으로 나눠 사요',
 }
 
+# (#125) AI 설명 시트의 "카드 규칙" 칸 — 카드 선택지에 보이는 설명과 같은 문장
+#  기존에는 CARD_FACTS.condition_desc("매 라운드 조건 없이 현금 5%씩 GLD 매수 (무제한)")를 그대로 보여줘서
+#  바로 아래 카드 선택지("매 라운드 현금의 5%씩 금 매수")와 문장이 다르고 종목 코드(SPX·GLD)가 보였다.
+#  앱 card_info.dart·서버 data.sql의 설명과 같은지 tests/test_card_sources.py가 확인한다.
+#  LLM 프롬프트에는 지금처럼 CARD_FACTS.condition_desc(참고용 발동 조건)를 쓴다.
+CARD_RULE_TEXT = {
+    1:  '고르는 즉시 현금의 30%로 S&P500 매수 (1번)',
+    2:  '매 라운드 현금의 5%씩 금 매수',
+    3:  'S&P500이 하루 3% 이상 떨어진 날마다 현금의 20%로 S&P500 매수',
+    4:  'S&P500이 하루 5% 이상 떨어진 날마다 현금의 15%로 금 매수',
+    5:  '나스닥이 하루 2% 이상 오른 날마다 현금의 10%로 나스닥 매수',
+    6:  '나스닥이 하루 4% 이상 떨어진 날 현금의 25%로 나스닥 매수 (최대 3번)',
+    7:  '고르는 즉시 현금의 20%로 원유 매수 (1번)',
+    8:  'S&P500이 하루 3% 이상 오른 날마다 보유 S&P500의 15% 매도',
+    9:  '애플이 하루 5% 이상 떨어진 날 현금의 10%로 애플 매수 (최대 5번)',
+    10: '매 라운드 현금의 3%씩 미국 장기채 매수',
+    11: '5라운드마다 현금의 10%로 나스닥 매수',
+}
+
 
 def market_line(req) -> str:
     """지금 시장 한 줄 — 서버 값으로 프로그램이 직접 만든다 (LLM이 틀릴 수 없음)"""
@@ -498,11 +517,12 @@ def build_prompt(req: V2FeedbackRequest) -> str:
 
 
 # (v8.0) 카드 규칙 문장은 프로그램이 붙인다 — 검증기와 같은 원천(CARD_FACTS)
+# (#125) 화면 문장은 카드 선택지와 같은 CARD_RULE_TEXT로
 def card_rule_header(card_id: int) -> str:
     fact = CARD_FACTS.get(card_id)
     if not fact:
         return ''
-    return f'카드 규칙 · {fact.name}: {fact.condition_desc}'
+    return f'카드 규칙 · {fact.name}: {CARD_RULE_TEXT.get(card_id, fact.condition_desc)}'
 
 
 def allowed_numbers(req: V2FeedbackRequest) -> List[float]:
