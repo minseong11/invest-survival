@@ -5,7 +5,8 @@ Spring Boot(8080)와 FastAPI(8000)가 켜진 상태에서, 시나리오마다 �
 카드 선택·위기 대응을 무작위로 고르며 100라운드까지 진행하고 아래를 확인한다.
   1) 이벤트 순서: 카드 선택(1·25·50·75) + 위기 대응 라운드에서만 멈추고, 1~100라운드가 빠짐없이 온다
   2) 라운드 응답: 자산·수익률, 보유 자산 비중 + 현금 비중 = 100%, 발동·건너뜀 정보,
-     종목 가격(priceData)은 보유 여부와 관계없이 그날 가격이 있는 모든 종목 (1라운드 포함)
+     종목 가격(priceData)은 보유 여부와 관계없이 그날 가격이 있는 모든 종목 (1라운드 포함),
+     다음 이벤트 라운드의 그날 시장(nextEventMarket)이 그 라운드 날짜·가격과 같은지
   3) 잘못된 요청은 400 (같은 라운드 재선택, 제시되지 않은 카드, 위기 대응 라운드에 카드 선택, 빈 요청 등)
   4) 실제 게임의 라운드별 자산 = Python run_game(같은 카드·같은 위기 대응)의 라운드별 자산 (원 단위까지)
   5) 사후 분석: 내 결과가 실제 게임 결과와 같고, 등급·최대 낙폭·카드별 성적표·위기 대응 돌아보기가 온다
@@ -66,7 +67,7 @@ def check_prices(r, listed):
     tickers = [p['ticker'] for p in r['priceData']]
     check(tickers == [t for t in TICKERS if t in listed],
           f'{r["round"]}R 종목 가격 {tickers} (그날 가격이 있는 종목 {sorted(listed)})')
-    held = {h['ticker'] for h in r['holdings']}
+    held = {h['ticker'] for h in r.get('holdings', [])}
     check(held <= set(tickers), f'{r["round"]}R 보유 종목 {held} 중 가격이 없는 종목')
 
 
@@ -156,6 +157,16 @@ def play_one(scenario, rng):
 
         data = res.json()['data']
         check_rounds(data['rounds'], event_round, end, price_data)
+        # (#125) 다음 이벤트 라운드의 그날 시장 — 고르기 전에 보여 주는 날 (AI 예측도 그날 종가까지 본다)
+        market, nxt = data.get('nextEventMarket'), data['nextEventRound']
+        if nxt is None:
+            check(market is None, f'{event_round}R 마지막 이벤트 뒤에는 다음 그날 시장이 없어야 함')
+        elif check(market and market['round'] == nxt, f'{event_round}R 다음 이벤트({nxt}R)의 그날 시장이 없음'):
+            idx = nxt - 1
+            check(market['date'] == str(price_data['dates'][idx])[:10],
+                  f'{nxt}R 그날 시장 날짜 {market["date"]} (가격 데이터 {price_data["dates"][idx]})')
+            check('roundAsset' not in market, f'{nxt}R 그날 시장에 고르기 전 자산이 들어 있음')
+            check_prices(market, listed_at(price_data, idx))
         all_rounds += data['rounds']
         next_round, next_type = data['nextEventRound'], data['nextEventType']
         options = data['nextCardOptions'] or []

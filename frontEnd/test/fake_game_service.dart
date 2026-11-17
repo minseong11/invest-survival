@@ -133,6 +133,10 @@ class FakeGameService extends GameService {
       'nextRoundNews': isDecision
           ? [_news(next, next == 60 ? 'positive' : 'danger', '테스트 속보 $next라운드')]
           : <Map<String, dynamic>>[],
+      // 실제 서버처럼 다음 이벤트 라운드의 그날 시장을 미리 보낸다 (내 자산은 고른 뒤 계산)
+      'nextEventMarket': next == null
+          ? null
+          : {'round': next, 'date': _date(next), 'priceData': _prices(next), 'news': <Map<String, dynamic>>[]},
       'rounds': [for (int r = round; r <= end; r++) _round(r)],
     };
   }

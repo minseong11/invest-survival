@@ -92,6 +92,16 @@ void main() {
       expect(result.rounds.last.round, 100);
     });
 
+    test('다음 이벤트 라운드의 그날 시장을 읽는다', () async {
+      final fake = FakeGameService();
+      final result = await fake.submitAction(sessionId: 'fake', round: 1, cardId: 1);
+      expect(result.nextEventMarket!.round, 10);
+      expect(result.nextEventMarket!.roundAsset, isNull);            // 내 자산은 고른 뒤에 계산
+      expect(result.nextEventMarket!.getPrice('XAUUSD'), isNotNull);
+      final last = await fake.submitAction(sessionId: 'fake', round: 75, cardId: 4);
+      expect(last.nextEventMarket, isNull);
+    });
+
     test('예전 서버 응답(nextEventType·nextDecision 없음)도 읽는다', () {
       final result = ActionResult.fromJson({
         'selectedCard': '거인의 어깨',
@@ -102,6 +112,7 @@ void main() {
       expect(result.nextEventType, isNull);
       expect(result.nextDecision, isNull);
       expect(result.tradeAmount, 0);
+      expect(result.nextEventMarket, isNull);
     });
   });
 

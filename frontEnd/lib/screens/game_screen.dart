@@ -13,6 +13,7 @@ import '../services/game_service.dart';
 import '../widgets/briefing_card.dart';
 import '../widgets/decision_selector.dart';
 import '../widgets/stock_chart.dart';
+import '../widgets/today_market.dart';
 import '../widgets/holdings_widget.dart';
 import '../widgets/market_chips.dart';
 import '../widgets/news_banner.dart';
@@ -81,6 +82,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // (#125) 위기 대응
   DecisionPrompt? _decisionPrompt;          // 다음 위기 대응 라운드의 속보 (서버 nextDecision)
+  RoundData? _eventMarket;                  // (#125) 다음 이벤트 라운드의 그날 시장 (서버 nextEventMarket)
   String? _pendingChoice;                   // 고른 대응 (확정 버튼을 눌러야 제출)
   final Map<int, String> _decisions = {};   // 라운드 → 내가 한 대응 (차트 표시용)
 
@@ -109,6 +111,34 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _currentRoundIndex.clamp(0, _session.rounds.length - 1));
 
   int get _currentRound1 => _currentRoundIndex + 1;
+
+  // (#125) 지금 고르는 라운드의 그날 시장 — 카드·위기 대응은 그날 종가로 매매하고, AI 예측도 그날 종가까지 본다
+  //        1라운드는 시작 응답의 1라운드, 그 뒤는 서버가 미리 보낸 이벤트 라운드 가격(nextEventMarket)
+  RoundData? get _todayMarket {
+    if (!_waiting) return null;
+    if (_currentRound1 == 1) {
+      return _session.rounds.isEmpty ? null : _session.rounds.first;
+    }
+    final m = _eventMarket;
+    return (m != null && m.round == _currentRound1) ? m : null;
+  }
+
+  // (#125) 차트·종목 칩·카드별 등락에 쓰는 라운드 — 고르는 중이면 그날 시장까지 (AI와 같은 기준).
+  //        내 자산은 고른 뒤에 계산되므로 전날까지만 있다
+  List<RoundData> get _displayRounds {
+    final base = _chartData;
+    final today = _todayMarket;
+    if (today == null || base.isEmpty || today.round != base.last.round + 1) return base;
+    return [...base, today];
+  }
+
+  // (#125) 오늘 시장 칸 아래 안내. 위기 대응은 선택지 아래에 이미 '오늘 종가로 바로 매매' 안내가 있다
+  String? get _todayCaption {
+    if (!_showCard) return null;
+    return _canUseV2
+        ? '고른 카드는 오늘 종가부터 작동해요. AI 예측도 오늘 종가까지의 시장을 보고 판단해요.'
+        : '고른 카드는 오늘 종가부터 작동해요.';
+  }
 
   // (#125) 사는 카드가 발동하지 않는 상태 — 현금이 총자산의 5% 미만 (게임 계산과 같은 기준)
   bool get _cashLow => !_notStarted && (_currentRound.cashWeight ?? 100) < 5;
@@ -728,6 +758,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       _currentCardOptions = result.nextCardOptions;
       _pendingSelectNews  = result.nextRoundNews;
       _decisionPrompt     = result.nextDecision;
+      _eventMarket        = result.nextEventMarket;
       _selectNews         = [];
       // 골랐으니 선택용 배너는 닫음
       if (_bannerSticky) {
@@ -832,7 +863,21 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           ? Padding(
                               key: _selectorKey,
                               padding: const EdgeInsets.only(top: 8),
-                              child: FadeInUp(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // (#125) 오늘 시장 — 그날 종가로 매매하므로 그날 움직임을 보고 고른다
+                                  if (_todayMarket case final today?) ...[
+                                    FadeInUp(
+                                      key: ValueKey('today-$_currentRound1'),
+                                      child: TodayMarketCard(
+                                        today: today,
+                                        caption: _todayCaption,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                  ],
+                                  FadeInUp(
                                 key: ValueKey('selector-$_currentRound1'),
                                 child: _showCard
                                     ? _buildCardSelector()
@@ -850,6 +895,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                                         onSelect: (c) =>
                                             setState(() => _pendingChoice = c),
                                       ),
+                              ),
+                                ],
                               ),
                             )
                           : const SizedBox(width: double.infinity),
@@ -1067,7 +1114,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                         curve: TossMotion.enter,
                         height: _waiting ? 130 : 190,
                         child: StockChart(
-                          rounds:          _chartData,
+                          rounds:          _displayRounds,
                           initialAsset:    initial,
                           cardIndexes:     _cardIndexes,
                           decisionIndexes: _decisionIndexes,
@@ -1076,7 +1123,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       ),
                       // (#125) 종목별 흐름 — 갖고 있지 않은 종목도 게임 시작 후 등락을 보고, 눌러서 차트에 겹쳐 본다
                       MarketChips(
-                        rounds:   _chartData,
+                        rounds:   _displayRounds,
                         selected: _overlayTickers,
                         onToggle: (t) => setState(() {
                           final next = {..._overlayTickers};
@@ -1176,7 +1223,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             InfoBox(
               child: Text(
                 '현금이 총자산의 5%보다 적어요 (지금 ${(_currentRound.cashWeight ?? 0).toStringAsFixed(1)}%). '
-                '사는 카드는 현금이 5% 이상일 때만 작동해서, 현금이 늘기 전까지는 발동하지 않아요.',
+                '조건이 맞을 때나 라운드마다 사는 카드는 현금이 5% 이상일 때만 작동해서 지금은 발동하지 않아요. '
+                '고르는 즉시 사는 카드는 남은 현금으로 바로 사요.',
                 style: TossText.caption.copyWith(color: const Color(0xFFC25E00)),
               ),
             ),
@@ -1327,7 +1375,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final selected     = _pendingCardId == card.id;
     // (#125) 이 카드가 사고파는 종목이 게임 시작 후 얼마나 움직였는지 (갖고 있지 않아도 보고 고를 수 있게)
     //        1라운드는 위의 시작 전 브리핑에 직전 20거래일 등락이 있다
-    final moved = _notStarted ? null : changeSinceStart(_chartData, card.ticker);
+    final moved = _notStarted ? null : changeSinceStart(_displayRounds, card.ticker);
 
     return Pressable(
       onTap: _isSubmitting

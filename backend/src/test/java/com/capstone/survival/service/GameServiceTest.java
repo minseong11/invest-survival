@@ -458,6 +458,50 @@ class GameServiceTest {
         }
     }
 
+    @Test
+    @SuppressWarnings("unchecked")
+    void 선택_라운드의_그날_시장을_고르기_전에_보낸다() {
+        addNews(1, 10, "danger", true);
+        setPrices("^SPX", Map.of(1, 2.0, 10, -5.0, 25, 9.0));
+
+        // 1라운드: 시작 전날 종가 대비 등락 (1라운드 카드도 그날 종가로 매매)
+        Map<String, Object> start = service.startGame(1);
+        Map<String, Object> spx1 = ((List<Map<String, Object>>) rounds(start).get(0).get("priceData")).get(0);
+        assertThat(spx1.get("ticker")).isEqualTo("^SPX");
+        assertThat(spx1.get("changeRate")).isEqualTo(2.0);
+
+        // 1라운드 선택 → 다음은 10라운드 위기 대응: 그날 날짜·가격·등락·속보를 미리 보낸다 (내 자산은 고른 뒤 계산)
+        String sid = (String) start.get("sessionId");
+        List<Integer> options = (List<Integer>) start.get("firstCardOptions");
+        Map<String, Object> r1 = service.selectCard(sid, 1, options.get(0));
+        Map<String, Object> market10 = (Map<String, Object>) r1.get("nextEventMarket");
+        assertThat(market10.get("round")).isEqualTo(10);
+        assertThat(market10.get("date")).isEqualTo(dateOfRound(10).toString());
+        assertThat(tickers(market10)).containsExactlyElementsOf(TICKERS);
+        assertThat(((List<Map<String, Object>>) market10.get("priceData")).get(0).get("changeRate")).isEqualTo(-5.0);
+        assertThat((List<?>) market10.get("news")).hasSize(1);
+        assertThat(market10).doesNotContainKey("roundAsset");
+        assertThat(roundsWhere(r1, r -> true)).last().isEqualTo(9);       // 라운드 결과는 전날까지
+
+        // AI 예측 지표(그날 종가까지)와 같은 날을 보여 준다: 25라운드 시장 = 1~25라운드 종가로 계산한 지표의 마지막 날
+        Map<String, Object> r10 = service.decide(sid, 10, "HOLD");
+        Map<String, Object> market25 = (Map<String, Object>) r10.get("nextEventMarket");
+        assertThat(market25.get("round")).isEqualTo(25);
+        assertThat(((List<Map<String, Object>>) market25.get("priceData")).get(0).get("changeRate")).isEqualTo(9.0);
+
+        // 25라운드 AI 예측 요청의 'S&P500 시작 후 수익률'은 그날(25라운드) 종가까지 — 화면에 보여 준 날과 같다
+        aiResponse = path -> "/ai/v2/recommend".equals(path)
+                ? Map.of("recommendedCardId", 3,
+                        "rankings", List.of(Map.of("rank", 1, "cardId", 3, "contribution", 1.0)),
+                        "modelVersion", "v2_B")
+                : Map.of("feedback", "지금 시장: 테스트");
+        service.recommendV2(sid, 25, null, null);
+        Map<String, Object> request = aiRequests.get(aiPaths.indexOf("/ai/v2/recommend"));
+        double throughToday = (102 * 0.95 * 1.09 - 102) / 102 * 100;      // 1라운드 102 → 10라운드 -5% → 25라운드 +9%
+        assertThat(((Number) request.get("spxReturnSoFar")).doubleValue())
+                .isCloseTo(throughToday, org.assertj.core.data.Offset.offset(0.01));
+    }
+
     @SuppressWarnings("unchecked")
     private List<String> tickers(Map<String, Object> round) {
         return ((List<Map<String, Object>>) round.get("priceData")).stream()

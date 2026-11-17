@@ -73,6 +73,7 @@ void main() {
     await _tap(tester, find.text('테스트 위기'));
     expect(find.text('시작 전 시장 브리핑'), findsOneWidget);
     expect(find.text('테스트 배경 설명이에요.'), findsOneWidget);
+    expect(find.text('오늘 9월 2일 시장'), findsOneWidget);           // 1라운드도 그날 종가로 매매
     expect(find.text('-7.6%'), findsOneWidget);                       // 원유 직전 20거래일 등락
     expect(find.text('전략을 골라주세요'), findsOneWidget);
     // 팔 주식이 없을 때 매도 카드에는 안내가 붙는다
@@ -87,6 +88,7 @@ void main() {
     await _playUntil(tester, find.text('대응을 골라주세요'));
     expect(find.text('속보가 나왔어요\n어떻게 대응할까요?'), findsOneWidget);
     expect(find.text('테스트 속보 10라운드'), findsOneWidget);
+    expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
     expect(find.text('10'), findsWidgets);                            // 헤더 라운드
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
@@ -95,6 +97,8 @@ void main() {
 
     // ── 25라운드: AI 예측·설명 ──
     await _playUntil(tester, find.text('AI 예측'));
+    expect(find.text('오늘 9월 26일 시장'), findsOneWidget);
+    expect(find.textContaining('AI 예측도 오늘 종가까지'), findsOneWidget);
     await _tap(tester, find.text('AI 예측'));
     expect(fake.calls, contains('ai:25'));
     expect(find.text('AI 1위'), findsOneWidget);
@@ -187,7 +191,7 @@ void main() {
     await _playUntil(tester, find.text('전략을 골라주세요'));
     expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
     expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
-    expect(find.text('+4.6%'), findsNWidgets(2));                      // 금 칩 + 금 피난처 (1→24라운드)
+    expect(find.text('+4.8%'), findsNWidgets(2));                      // 금 칩 + 금 피난처 (1→25라운드, 그날까지)
 
     await tester.pump(const Duration(seconds: 6));
   });

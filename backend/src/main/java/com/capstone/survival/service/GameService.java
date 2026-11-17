@@ -202,10 +202,15 @@ public class GameService {
 
         StockPrice first = prices.spx.get(0);
         // (#125) 1라운드 가격: 그날 가격이 있는 모든 종목 (기존: S&P500만)
+        //        등락은 게임 시작 전날 종가 대비 — 1라운드 카드도 그날 종가로 매매하므로 그날 움직임을 보여 준다
         List<Map<String, Object>> firstPrices = new ArrayList<>();
         for (String ticker : TICKERS) {
             StockPrice p = "^SPX".equals(ticker) ? first : prices.at(ticker, 0);
-            if (p != null) firstPrices.add(priceEntry(ticker, p, 0.0));
+            if (p == null) continue;
+            StockPrice prev = stockPriceRepository
+                    .findTopByTickerAndTradeDateLessThanEqualOrderByTradeDateDesc(ticker, first.getTradeDate().minusDays(1))
+                    .orElse(null);
+            firstPrices.add(priceEntry(ticker, p, calcChangeRate(prev, p)));
         }
 
         Map<String, Object> firstRound = new LinkedHashMap<>();
@@ -625,8 +630,24 @@ public class GameService {
         response.put("nextRoundNews", nextEventRound != null
                 ? news.byRound.getOrDefault(nextEventRound, new ArrayList<>())
                 : new ArrayList<>());
+        // (#125) 다음 선택 라운드의 그날 시장 — 카드·위기 대응은 그날 종가로 매매하고, AI 예측도 그날 종가까지 본다.
+        //        기존에는 화면이 전날까지만 보여 줘서 AI가 플레이어보다 하루를 더 알았다.
+        //        포트폴리오는 고른 뒤에 계산되므로 넣지 않는다 (가격·등락·뉴스만)
+        response.put("nextEventMarket", nextEventRound != null ? marketOf(nextEventRound, prices, news) : null);
         response.put("rounds", rounds);
         return response;
+    }
+
+    // 그 라운드의 날짜, 종목별 가격·전날 대비 등락, 뉴스
+    private Map<String, Object> marketOf(int round, PriceTable prices, NewsPlan news) {
+        int i = round - 1;
+        if (i < 0 || i >= prices.spx.size()) return null;
+        Map<String, Object> market = new LinkedHashMap<>();
+        market.put("round", round);
+        market.put("date", prices.spx.get(i).getTradeDate().toString());
+        market.put("priceData", priceDataAt(prices, i));
+        market.put("news", news.byRound.getOrDefault(round, new ArrayList<>()));
+        return market;
     }
 
     private Map<String, Object> decisionInfo(int round, NewsPlan news, GameSession session) {
@@ -1062,13 +1083,7 @@ public class GameService {
 
             // 화면 표시용 가격: 그날 가격이 있는 모든 종목 (상장 전 종목은 빠진다)
             // (#125) 기존에는 S&P500과 보유 중인 종목만 보내, 갖고 있지 않은 종목은 흐름을 보고 고를 수 없었다
-            List<Map<String, Object>> priceDataList = new ArrayList<>();
-            for (String ticker : TICKERS) {
-                StockPrice current = prices.at(ticker, i);
-                if (current == null) continue;
-                // 등락률은 기존 응답 형식 유지: 계산할 수 없으면 0.0
-                priceDataList.add(priceEntry(ticker, current, calcChangeRate(prices.at(ticker, i - 1), current)));
-            }
+            List<Map<String, Object>> priceDataList = priceDataAt(prices, i);
 
             Map<String, Object> roundMap = new LinkedHashMap<>();
             roundMap.put("round", roundNumber);
@@ -1130,6 +1145,18 @@ public class GameService {
         if (prev == null || current == null || prev.getClose() <= 0) return null;
         double rate = (current.getClose() - prev.getClose()) / prev.getClose() * 100;
         return round2(rate);
+    }
+
+    // 화면 표시용 가격: i번째 라운드에 가격이 있는 모든 종목, TICKERS 순서 (상장 전 종목은 빠진다)
+    //   등락률은 기존 응답 형식 유지: 전날 가격이 없어 계산할 수 없으면 0.0
+    private List<Map<String, Object>> priceDataAt(PriceTable prices, int i) {
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (String ticker : TICKERS) {
+            StockPrice current = prices.at(ticker, i);
+            if (current == null) continue;
+            list.add(priceEntry(ticker, current, calcChangeRate(prices.at(ticker, i - 1), current)));
+        }
+        return list;
     }
 
     // 화면 표시용 가격 한 줄 (라운드 응답의 priceData 항목)
