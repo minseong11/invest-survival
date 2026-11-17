@@ -332,9 +332,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           const SizedBox(height: 4),
           for (final r in ranked) _buildRankBar(r, maxAbs),
           const SizedBox(height: 4),
-          // (#125) 이 숫자는 최종 수익률 예측이 아니라 후보 평균과의 차이
+          // (#125) 이 숫자는 최종 수익률 예측이 아니라 "아직 고르지 않은 카드 전체"의 평균과의 차이
+          //        (학습 라벨 Card_Contribution = 이 카드를 골랐을 때 최종 수익률 − 고를 수 있는 카드 전체의 평균,
+          //         monte_carlo_v2.py). 지금 나온 후보 3장의 평균이 아니므로 세 값을 더해도 0이 아니다
           const Text(
-            '숫자는 후보 3장의 평균과 비교한 예상 차이(%p)예요. 최종 수익률을 예측한 값이 아니에요.',
+            '숫자는 아직 고르지 않은 카드 전체의 평균과 비교한 예상 차이(%p)예요. 최종 수익률을 예측한 값이 아니에요.',
             style: TossText.small,
           ),
 
@@ -431,7 +433,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             ),
           ),
           const SizedBox(width: 8),
-          // (#125) 가운데 기준선(후보 평균)에서 +는 오른쪽, -는 왼쪽으로 뻗는다
+          // (#125) 가운데 기준선(카드 전체 평균)에서 +는 오른쪽, -는 왼쪽으로 뻗는다
           //        (기존에는 절댓값 길이라 -0.4%가 +0.3%보다 길게 보였다)
           Expanded(
             child: LayoutBuilder(
@@ -1314,9 +1316,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ],
                   if (showContrib) ...[
                     const SizedBox(height: 4),
-                    // (#125) 이 값은 기대수익률이 아니라 후보 3장 평균과의 예상 차이(%p)
+                    // (#125) 이 값은 기대수익률이 아니라 아직 고르지 않은 카드 전체 평균과의 예상 차이(%p)
                     Text(
-                      'AI 예측: 후보 평균보다 ${formatSigned(contribution, unit: '%p')}',
+                      'AI 예측: 카드 평균보다 ${formatSigned(contribution, unit: '%p')}',
                       style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,

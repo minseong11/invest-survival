@@ -95,11 +95,12 @@ void main() {
     await _tap(tester, find.text('AI 예측'));
     expect(fake.calls, contains('ai:25'));
     expect(find.text('AI 1위'), findsOneWidget);
-    // 예측값은 기대수익률이 아니라 후보 평균과의 차이로 표기
-    expect(find.text('AI 예측: 후보 평균보다 +1.4%p'), findsOneWidget);
-    expect(find.text('AI 예측: 후보 평균보다 -1.2%p'), findsOneWidget);
+    // 예측값은 기대수익률이 아니라 카드 평균(아직 고르지 않은 카드 전체)과의 차이로 표기
+    expect(find.text('AI 예측: 카드 평균보다 +1.4%p'), findsOneWidget);
+    expect(find.text('AI 예측: 카드 평균보다 -1.2%p'), findsOneWidget);
     await _tap(tester, find.text('AI 설명'));
     expect(find.text('후보 카드 예측 비교'), findsOneWidget);
+    expect(find.textContaining('아직 고르지 않은 카드 전체의 평균과 비교한 예상 차이'), findsOneWidget);
     expect(find.textContaining('최종 수익률을 예측한 값이 아니에요'), findsOneWidget);
     await _tap(tester, find.text('확인했어요'));
     await _tap(tester, find.text('AI 1위'));

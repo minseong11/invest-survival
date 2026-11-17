@@ -213,9 +213,10 @@ class FakeGameService extends GameService {
     return V2RecommendResult.fromJson({
       'recommendedCardId': candidateCards[1],
       'recommendedCardName': '추천 카드',
+      // 예측값은 아직 고르지 않은 카드 전체의 평균과의 차이라서 세 값의 합이 0일 필요는 없다
       'rankings': [
         {'rank': 1, 'cardId': candidateCards[1], 'cardName': 'A', 'contribution': 1.4},
-        {'rank': 2, 'cardId': candidateCards[0], 'cardName': 'B', 'contribution': -0.2},
+        {'rank': 2, 'cardId': candidateCards[0], 'cardName': 'B', 'contribution': 0.3},
         {'rank': 3, 'cardId': candidateCards[2], 'cardName': 'C', 'contribution': -1.2},
       ],
       'feedback': '지금 시장: 시작 후 17.3% 하락 · 하루 등락은 크게 출렁이는 편\n'

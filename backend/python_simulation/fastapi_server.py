@@ -430,8 +430,12 @@ def market_line(req) -> str:
 
 
 def default_reason(req) -> str:
-    """LLM 문장을 못 쓸 때의 '그래서' 한 줄 — 확인된 사실만"""
-    return f'AI는 후보 {len(req.rankings)}장 중 이 카드가 평균보다 가장 나을 것으로 예측했어요.'
+    """
+    LLM 문장을 못 쓸 때의 '그래서' 한 줄 — 확인된 사실만.
+    V2 예측값(Card_Contribution)은 "이 카드를 골랐을 때 최종 수익률 − 고를 수 있는 카드 전체의 평균"이라
+    후보 중 예측값이 가장 큰 카드 = 골랐을 때 결과가 가장 좋을 것으로 예측된 카드다.
+    """
+    return f'AI는 후보 {len(req.rankings)}장 중 이 카드를 골랐을 때 결과가 가장 좋을 것으로 예측했어요.'
 
 
 def compose_feedback(req, reason: str) -> str:
