@@ -131,6 +131,34 @@ void main() {
       expect(review.headline, '');
     });
 
+    test('표시하면 +0.0%p인 차이는 더 좋았던 선택으로 치지 않는다', () {
+      DecisionRoundReview decision(double diff) => DecisionRoundReview.fromJson({
+            'round': 60,
+            'date': '2008-11-24',
+            'choice': 'BUY_MORE',
+            'tradeAmount': 110000,
+            'alternatives': [
+              {'choice': 'HOLD', 'finalReturnRate': 4.7, 'diffReturnRate': diff},
+              {'choice': 'SELL_HALF', 'finalReturnRate': 4.0, 'diffReturnRate': -0.7},
+            ],
+          });
+      expect(decision(0.04).better, isNull);               // 기존: "+0.0%p 놓침"으로 표시됐다
+      expect(decision(0.05).better!.choice, 'HOLD');       // 화면에 +0.1%p로 보이는 차이부터
+      expect(0.05.toStringAsFixed(1), '0.1');
+
+      RoundAlternatives card(double diff) => RoundAlternatives.fromJson({
+            'round': 25,
+            'offeredCards': [4, 7, 8],
+            'playerCardId': 4,
+            'alternatives': [
+              {'cardId': 7, 'cardName': '원유 베팅', 'finalAsset': 9000000, 'finalReturnRate': -10.0, 'diffReturnRate': diff},
+              {'cardId': 8, 'cardName': '역발상 투자', 'finalAsset': 8900000, 'finalReturnRate': -11.0, 'diffReturnRate': -1.0},
+            ],
+          });
+      expect(card(0.01).better, isNull);
+      expect(card(0.05).better!.cardId, 7);
+    });
+
     test('등급·성적표·그 후 이야기 파싱', () {
       final a = ResultAnalysis.fromJson(FakeGameService().analysisJson());
       expect(a.grade, 'C');

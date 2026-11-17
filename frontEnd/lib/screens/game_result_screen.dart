@@ -85,6 +85,8 @@ class _GameResultScreenState extends State<GameResultScreen> {
     if (spx == null) {
       return mine >= 0 ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요';
     }
+    // (#125) 표시하면 0.0%p인 차이 — "시장보다 0.0%p 덜 잃었어요" 대신
+    if ((mine - spx).abs() < kMinVisibleGap) return '시장과 거의\n같은 결과예요';
     final gap = (mine - spx).abs().toStringAsFixed(1);
     if (mine >= spx) {
       if (mine >= 0 && spx < 0) return '시장은 떨어졌지만\n수익을 냈어요';
@@ -551,8 +553,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     color: TossColors.blue500))
           else
             Text(
-              '같은 카드를 받았을 때 가장 좋은 조합보다 '
-              '${gap.toStringAsFixed(1)}%p 낮았어요',
+              // (#125) 표시하면 0.0%p인 차이는 "0.0%p 낮았어요" 대신 거의 같다고 말한다
+              gap < kMinVisibleGap
+                  ? '같은 카드를 받았을 때 가장 좋은 조합과 거의 같은 결과였어요'
+                  : '같은 카드를 받았을 때 가장 좋은 조합보다 '
+                      '${gap.toStringAsFixed(1)}%p 낮았어요',
               style: TossText.sub.copyWith(color: TossColors.grey700),
             ),
           const SizedBox(height: 12),

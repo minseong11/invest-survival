@@ -119,6 +119,10 @@ class RoundAlternative {
   }
 }
 
+// (#125) 화면에는 차이를 소수 1자리(%p)로 표시한다. 0.05%p 미만은 "+0.0%p 놓침"으로 보이므로
+//        더 좋았던 선택으로 치지 않는다 (사실상 같은 결과 → 내 선택이 최선)
+const double kMinVisibleGap = 0.05;
+
 class RoundAlternatives {
   final int round;
   final List<int> offeredCards;
@@ -150,7 +154,7 @@ class RoundAlternatives {
     if (alternatives.isEmpty) return null;
     final top = alternatives.reduce(
         (a, b) => a.diffReturnRate >= b.diffReturnRate ? a : b);
-    return top.diffReturnRate > 0 ? top : null;
+    return top.diffReturnRate >= kMinVisibleGap ? top : null;
   }
 }
 
@@ -312,7 +316,7 @@ class DecisionRoundReview {
     if (alternatives.isEmpty) return null;
     final top = alternatives
         .reduce((a, b) => a.diffReturnRate >= b.diffReturnRate ? a : b);
-    return top.diffReturnRate > 0 ? top : null;
+    return top.diffReturnRate >= kMinVisibleGap ? top : null;
   }
 
   factory DecisionRoundReview.fromJson(Map<String, dynamic> json) =>
