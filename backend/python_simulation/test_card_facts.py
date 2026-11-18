@@ -63,6 +63,7 @@ def main():
             print(f'      - {e}')
     print('=' * 60)
     print(f'결과: {len(CARDS) - fail}/{len(CARDS)} 일치')
+    return fail     # (#125) 어긋난 카드 수 — tests/test_existing_scripts.py에서 0인지 확인
 
 
 if __name__ == '__main__':

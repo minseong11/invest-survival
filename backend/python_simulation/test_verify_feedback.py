@@ -415,6 +415,7 @@ def run():
             f"{total - len(gap_cases)}개이고, {len(gap_cases)}개는 다음에 고쳐야 할 "
             "구체적인 할 일 목록으로 남겨둔 것입니다."
         )
+    return failed_names     # (#125) 기대와 다르게 동작한 케이스 — tests/test_existing_scripts.py에서 비었는지 확인
 
 
 if __name__ == "__main__":

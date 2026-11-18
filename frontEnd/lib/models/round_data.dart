@@ -2,6 +2,46 @@ import 'holding.dart';
 import 'news_item.dart';
 import 'price_data.dart';
 
+// (#125) 발동 조건은 맞았지만 실행되지 못한 카드 (서버 rounds[].skippedCards)
+//   reason: CASH_LOW(현금 부족) / MAX_REACHED(최대 횟수 소진) / NO_HOLDINGS(팔 주식 없음) / NO_PRICE(가격 없음)
+class SkippedCard {
+  final int cardId;
+  final String reason;
+
+  const SkippedCard({required this.cardId, required this.reason});
+
+  static const cashLow    = 'CASH_LOW';
+  static const maxReached = 'MAX_REACHED';
+  static const noHoldings = 'NO_HOLDINGS';
+  static const noPrice    = 'NO_PRICE';
+
+  // 화면에 보여줄 짧은 이유
+  static String label(String reason) => switch (reason) {
+        cashLow    => '현금 부족',
+        maxReached => '횟수 소진',
+        noHoldings => '팔 주식 없음',
+        noPrice    => '가격 없음',
+        _          => '건너뜀',
+      };
+
+  // 카드 칩처럼 좁은 곳에 쓰는 더 짧은 이유
+  static String shortLabel(String reason) => switch (reason) {
+        noHoldings => '보유 없음',
+        _          => label(reason),
+      };
+
+  static List<SkippedCard> listFromJson(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => SkippedCard(
+              cardId: (e['cardId'] as num?)?.toInt() ?? 0,
+              reason: (e['reason'] as String?) ?? '',
+            ))
+        .toList();
+  }
+}
+
 class RoundData {
   final int round;
   final String date;
@@ -9,6 +49,7 @@ class RoundData {
   final double? roundAsset;       // 카드 선택 전 = null
   final double? returnRate;       // 카드 선택 전 = null
   final List<int> triggeredCards; // 이 라운드에 발동한 카드 ID 목록 (v3 추가)
+  final List<SkippedCard> skippedCards; // (#125) 조건은 맞았지만 실행되지 못한 카드
 
   // (11주차) 보유 자산 — 서버가 아직 안 보내면 빈 목록 / null (화면에서 해당 칸 생략)
   final List<Holding> holdings;   // 종목별 수익률·비중
@@ -23,6 +64,7 @@ class RoundData {
     this.roundAsset,
     this.returnRate,
     this.triggeredCards = const [],
+    this.skippedCards = const [],
     this.holdings = const [],
     this.cash,
     this.cashWeight,
@@ -44,6 +86,7 @@ class RoundData {
           ? (json['returnRate'] as num).toDouble()
           : null,
       triggeredCards: triggeredList.map((e) => e as int).toList(),
+      skippedCards:   SkippedCard.listFromJson(json['skippedCards']),
       holdings:       holdingList
           .map((e) => Holding.fromJson(e as Map<String, dynamic>))
           .toList(),

@@ -8,6 +8,9 @@ FastAPI AI 추천 서버
   POST /ai/v2/feedback  — V2 LLM 자연어 피드백 (25·50라운드, v5.0 신규)
   POST /ai/analysis/backtest — 사후 분석: 전체 조합 백테스팅 (v6.0 신규, 사용 가능 카드 기준)
                                + 받은 후보 안 최선 조합·라운드별 대안 (11주차, offeredCards)
+                               + 등급·최대 낙폭·카드별 성적표·위기 대응 돌아보기·그 후 이야기 (#125)
+  POST /ai/analysis/prewarm  — 전체 조합 결과 미리 계산 (#125, 게임 중 호출 → 결과 화면이 바로 뜸)
+  POST /ai/analysis/coach    — 사후 분석 AI 코치 한마디 (#125, 사실은 프로그램이 쓰고 LLM은 한 문장만)
 
 Java Spring Boot가 내부적으로 호출. Flutter는 직접 호출하지 않음.
 """
@@ -15,17 +18,26 @@ import os
 import re
 import pickle
 import numpy as np
+from contextlib import asynccontextmanager
 from itertools import permutations
 from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import anthropic
-from backtest import run_backtest
+from backtest import run_backtest, prewarm
+import result_coach
+from display_format import fixed
 from verify_feedback import verify_feedback, CARD_FACTS
 from data_loader import load_all
 import pandas as pd
 
-client = anthropic.Anthropic()
+# ── LLM 설정 (#125) ───────────────────────────────────────
+# 모델은 환경변수 LLM_MODEL로 바꿀 수 있다 (기본값은 지금까지 검증에 써 온 모델 그대로).
+# 시간 제한: 한 문장 생성이 길어지면 게임 화면이 멈춘 것처럼 보이므로 8초 + 재시도 1회로 끊고,
+#           실패하면 프로그램이 만든 기본 문장으로 응답한다 (Spring Boot 응답 대기 30초 안에 끝남).
+LLM_MODEL = os.environ.get('LLM_MODEL', 'claude-sonnet-4-6')
+LLM_TIMEOUT_SEC = float(os.environ.get('LLM_TIMEOUT_SEC', '8'))
+client = anthropic.Anthropic(timeout=LLM_TIMEOUT_SEC, max_retries=1)
 
 # ── 경로 설정 ──────────────────────────────────────────────
 BASE_DIR       = os.path.dirname(__file__)
@@ -71,14 +83,22 @@ FEATURE_COLS_V2 = [
 ]
 
 # ── 앱 초기화 + 모델 로드 ──────────────────────────────────
-app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='6.0')
-
 model_v15 = None
 model_v2  = None   # 기존 V2
 model_v2_a = None
 model_v2_b = None
 
-@app.on_event('startup')
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # (#125) on_event('startup')은 지원 종료 예정이라 lifespan으로 옮김
+    load_models()
+    yield
+
+
+app = FastAPI(title='투자 서바이벌 AI 추천 서버', version='9.0', lifespan=lifespan)
+
+
 def load_models():
     global model_v15, model_v2, model_v2_a, model_v2_b
 
@@ -176,6 +196,8 @@ class BacktestRequest(BaseModel):
     playerCardSelections: Dict[str, int]    # {"1": 1, "25": 4, "50": 5, "75": 9}
     topN: int = 3
     offeredCards: Optional[Dict[str, List[int]]] = None   # (11주차) {"1": [1,3,10], "25": [...], ...} 라운드별 제시 후보
+    decisions: Optional[Dict[str, str]] = None            # (#125) 위기 대응 {"10": "SELL_HALF", "20": "HOLD"} — 모든 조합에 똑같이 적용
+    baseTicker: Optional[str] = None                      # (#125) '더 산다'에서 사는 종목 (^SPX / ^NDX). 없으면 ^SPX
 
 class BacktestCombo(BaseModel):
     rank: int
@@ -211,12 +233,92 @@ class OfferedAnalysis(BaseModel):
     playerResult: BacktestPlayerResult
     roundAlternatives: List[OfferedRoundAlternatives]
 
+# (#125) 최대 낙폭
+class RiskInfo(BaseModel):
+    playerMdd: float                        # 내 자산의 최대 낙폭(%, 0 이하)
+    playerMddRound: Optional[int] = None    # 가장 깊었던 라운드 (낙폭이 없으면 null)
+    playerMddDate: Optional[str] = None
+    marketMdd: float                        # 같은 기간 S&P500 최대 낙폭(%)
+    marketMddRound: Optional[int] = None
+    marketMddDate: Optional[str] = None
+    marketReturnRate: float                 # 같은 기간 S&P500 수익률(%)
+
+# (#125) 카드별 성적표
+class CardReportItem(BaseModel):
+    round: int
+    cardId: int
+    cardName: str
+    cardType: str
+    triggerCount: int                       # 실제로 매매가 일어난 횟수
+    tradeAmount: int                        # 매매 금액 합계 (원)
+    skips: Dict[str, int]                   # 조건은 맞았지만 실행되지 못한 횟수 {CASH_LOW / MAX_REACHED / NO_HOLDINGS / NO_PRICE}
+    withoutFinalAsset: int                  # 이 카드만 고르지 않았을 때의 최종 자산
+    withoutFinalReturnRate: float
+    effectAsset: int                        # 내 결과 − 이 카드를 뺀 결과 (원)
+    effectReturnRate: float                 # 같은 값을 %p로 (+면 이 카드가 결과를 끌어올림)
+
+# (#125) 위기 대응 돌아보기
+class DecisionAlternative(BaseModel):
+    choice: str
+    finalAsset: int
+    finalReturnRate: float
+    diffReturnRate: float                   # 다른 선택 − 내 결과 (%p, +면 다른 선택이 더 좋았음)
+
+class DecisionRoundReview(BaseModel):
+    round: int
+    date: str
+    choice: str                             # HOLD / SELL_HALF / BUY_MORE
+    tradeAmount: int                        # 그때 팔거나 산 금액 (원)
+    alternatives: List[DecisionAlternative]
+
+class DecisionReview(BaseModel):
+    rounds: List[DecisionRoundReview]
+    allHoldFinalAsset: int                  # 전부 버텼을 때
+    allHoldFinalReturnRate: float
+    effectReturnRate: float                 # 내 결과 − 전부 버텼을 때 (%p)
+
+# (#125) 그 후 이야기
+class EpiloguePoint(BaseModel):
+    label: str                              # "6개월 뒤" / "1년 뒤"
+    tradingDays: int
+    date: str
+    spxChangeRate: float                    # 게임 종료일 대비 S&P500 (%)
+    playerAsset: int                        # 내 최종 보유 자산을 그대로 뒀을 때 평가액
+    playerReturnRate: float                 # 원금 대비 (%)
+    bestAsset: Optional[int] = None         # 게임 1위 조합을 그대로 뒀을 때
+    bestReturnRate: Optional[float] = None
+
+class Epilogue(BaseModel):
+    endDate: str                            # 게임 마지막 라운드 날짜
+    points: List[EpiloguePoint]
+
 class BacktestResponse(BaseModel):
     totalCombinations: int
     cardPoolSize: int                       # 시작일에 사용 가능한 카드 수 (상장 전 종목 카드 제외)
     topCombos: List[BacktestCombo]
     playerResult: BacktestPlayerResult
     offeredAnalysis: Optional[OfferedAnalysis] = None   # (11주차) 후보 정보가 없으면 null
+    # (#125)
+    grade: str = ''                                     # S / A / B / C / D (전체 조합 순위 기준)
+    risk: Optional[RiskInfo] = None
+    cardReport: List[CardReportItem] = []
+    decisionReview: Optional[DecisionReview] = None     # 위기 대응이 없으면 null
+    epilogue: Optional[Epilogue] = None                 # 게임 종료 뒤 데이터가 없으면 null
+
+# (#125) 미리 계산 요청/응답
+class PrewarmRequest(BaseModel):
+    startDate: str
+    decisions: Optional[Dict[str, str]] = None
+    baseTicker: Optional[str] = None
+
+class PrewarmResponse(BaseModel):
+    status: str                             # 'ready' | 'started'
+
+# (#125) AI 코치 한마디 응답 — 요청은 BacktestRequest와 같다
+class CoachResponse(BaseModel):
+    comment: str                            # 줄 머리말로 나뉜 글: 요약 / 잘한 점 / 아쉬운 점 / 위기 대응 / 다음엔
+    verified: Optional[bool] = None         # True: 검사 통과한 LLM 문장 / False: 검사 실패 → 규칙 문장 / None: LLM 호출 실패
+    status: str = ''                        # 'llm' | 'fallback' | 'failed'
 
 
 # =============================================
@@ -316,6 +418,25 @@ CARD_EASY = {
     11: '기술주를 며칠 간격으로 나눠 사요',
 }
 
+# (#125) AI 설명 시트의 "카드 규칙" 칸 — 카드 선택지에 보이는 설명과 같은 문장
+#  기존에는 CARD_FACTS.condition_desc("매 라운드 조건 없이 현금 5%씩 GLD 매수 (무제한)")를 그대로 보여줘서
+#  바로 아래 카드 선택지("매 라운드 현금의 5%씩 금 매수")와 문장이 다르고 종목 코드(SPX·GLD)가 보였다.
+#  앱 card_info.dart·서버 data.sql의 설명과 같은지 tests/test_card_sources.py가 확인한다.
+#  LLM 프롬프트에는 지금처럼 CARD_FACTS.condition_desc(참고용 발동 조건)를 쓴다.
+CARD_RULE_TEXT = {
+    1:  '고르는 즉시 현금의 30%로 S&P500 매수 (1번)',
+    2:  '매 라운드 현금의 5%씩 금 매수',
+    3:  'S&P500이 하루 3% 이상 떨어진 날마다 현금의 20%로 S&P500 매수',
+    4:  'S&P500이 하루 5% 이상 떨어진 날마다 현금의 15%로 금 매수',
+    5:  '나스닥이 하루 2% 이상 오른 날마다 현금의 10%로 나스닥 매수',
+    6:  '나스닥이 하루 4% 이상 떨어진 날 현금의 25%로 나스닥 매수 (최대 3번)',
+    7:  '고르는 즉시 현금의 20%로 원유 매수 (1번)',
+    8:  'S&P500이 하루 3% 이상 오른 날마다 보유 S&P500의 15% 매도',
+    9:  '애플이 하루 5% 이상 떨어진 날 현금의 10%로 애플 매수 (최대 5번)',
+    10: '매 라운드 현금의 3%씩 미국 장기채 매수',
+    11: '5라운드마다 현금의 10%로 나스닥 매수',
+}
+
 
 def market_line(req) -> str:
     """지금 시장 한 줄 — 서버 값으로 프로그램이 직접 만든다 (LLM이 틀릴 수 없음)"""
@@ -323,13 +444,17 @@ def market_line(req) -> str:
     if abs(r) < 0.5:
         move = '시작 때와 비슷해요'
     else:
-        move = f'시작 후 {abs(r):.1f}% {"하락" if r < 0 else "상승"}'
+        move = f'시작 후 {fixed(abs(r))}% {"하락" if r < 0 else "상승"}'
     return f'{move} · 하루 등락은 {volatility_words(req.spxVolatilitySoFar)}'
 
 
 def default_reason(req) -> str:
-    """LLM 문장을 못 쓸 때의 '그래서' 한 줄 — 확인된 사실만"""
-    return f'AI는 후보 {len(req.rankings)}장 중 이 카드의 예측 수익이 가장 높다고 봤어요.'
+    """
+    LLM 문장을 못 쓸 때의 '그래서' 한 줄 — 확인된 사실만.
+    V2 예측값(Card_Contribution)은 "이 카드를 골랐을 때 최종 수익률 − 고를 수 있는 카드 전체의 평균"이라
+    후보 중 예측값이 가장 큰 카드 = 골랐을 때 결과가 가장 좋을 것으로 예측된 카드다.
+    """
+    return f'AI는 후보 {len(req.rankings)}장 중 이 카드를 골랐을 때 결과가 가장 좋을 것으로 예측했어요.'
 
 
 def compose_feedback(req, reason: str) -> str:
@@ -392,11 +517,12 @@ def build_prompt(req: V2FeedbackRequest) -> str:
 
 
 # (v8.0) 카드 규칙 문장은 프로그램이 붙인다 — 검증기와 같은 원천(CARD_FACTS)
+# (#125) 화면 문장은 카드 선택지와 같은 CARD_RULE_TEXT로
 def card_rule_header(card_id: int) -> str:
     fact = CARD_FACTS.get(card_id)
     if not fact:
         return ''
-    return f'카드 규칙 · {fact.name}: {fact.condition_desc}'
+    return f'카드 규칙 · {fact.name}: {CARD_RULE_TEXT.get(card_id, fact.condition_desc)}'
 
 
 def allowed_numbers(req: V2FeedbackRequest) -> List[float]:
@@ -485,6 +611,24 @@ def unconditional_misdescribed(text: str) -> List[str]:
 def strip_markdown(text: str) -> str:
     text = re.sub(r'^\s*#+\s*', '', text, flags=re.MULTILINE)
     return text.replace('**', '').replace('__', '').strip()
+
+
+def llm_text(prompt: str, max_tokens: int = 500) -> str:
+    """
+    (#125) LLM을 한 번 호출해 글만 꺼낸다. 실패하면 예외 (부르는 쪽에서 기본 문장으로 응답).
+    응답의 첫 블록이 글이 아닐 수 있어(생각 블록 등) 글 블록만 모은다.
+    글 블록이 하나도 없으면(응답 거절 등) 실패로 본다.
+    """
+    msg = client.messages.create(
+        model=LLM_MODEL,
+        max_tokens=max_tokens,
+        messages=[{'role': 'user', 'content': prompt}],
+    )
+    parts = [b.text for b in msg.content
+             if getattr(b, 'type', 'text') == 'text' and getattr(b, 'text', None)]
+    if not parts:
+        raise RuntimeError(f'LLM 응답에 글이 없습니다 (stop_reason={getattr(msg, "stop_reason", None)})')
+    return ''.join(parts)
 
 
 # =============================================
@@ -650,12 +794,7 @@ def generate_feedback(req: V2FeedbackRequest):
     (12주차) 응답은 3줄 구조(compose_feedback): 지금 시장 / 이 카드는 / 그래서. LLM은 '그래서' 한 줄만 쓴다.
     """
     try:
-        msg = client.messages.create(
-            model='claude-sonnet-4-6',
-            max_tokens=500,
-            messages=[{'role': 'user', 'content': build_prompt(req)}]
-        )
-        text = strip_markdown(msg.content[0].text)
+        text = strip_markdown(llm_text(build_prompt(req)))
     except Exception as e:
         # (v8.0) 빈 문자열 대신 "생성 실패" 상태를 알리고, 카드 규칙은 그대로 보여준다
         print(f'⚠️  LLM 피드백 생성 실패: {e}')
@@ -695,16 +834,70 @@ def analysis_backtest(req: BacktestRequest):
     플레이어 조합의 최종 자산 순위/백분위를 반환한다.
     (11주차) offeredCards를 주면 "받은 후보 안 최선 조합"과 라운드별 대안(offeredAnalysis)도 반환한다.
     def(동기)로 선언해 FastAPI가 별도 스레드에서 실행 → 계산 중에도 다른 요청이 막히지 않음.
+    (#125) decisions(위기 대응)를 주면 모든 조합을 같은 위기 대응으로 계산한다.
+           등급·최대 낙폭·카드별 성적표·위기 대응 돌아보기·그 후 이야기를 함께 반환한다.
+           전체 조합 결과는 (시작일, 위기 대응)별로 캐시된다.
     """
+    return _run_analysis(req)
+
+
+def _run_analysis(req: BacktestRequest) -> dict:
     if not 1 <= req.topN <= 20:
         raise HTTPException(status_code=400, detail='topN은 1~20 사이여야 합니다')
     try:
         return run_backtest(req.startDate, req.playerCardSelections, req.topN,
-                            offered_cards=req.offeredCards)
+                            offered_cards=req.offeredCards,
+                            decisions=req.decisions,
+                            base_ticker=req.baseTicker or '^SPX')
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f'백테스팅 오류: {str(e)}')
+
+
+@app.post('/ai/analysis/prewarm', response_model=PrewarmResponse)
+def analysis_prewarm(req: PrewarmRequest):
+    """
+    (#125) 전체 조합 결과를 백그라운드에서 미리 계산해 둔다. 바로 응답한다.
+    게임 서버가 마지막 위기 대응이 정해진 뒤 호출 → 결과 화면에 들어왔을 때 계산이 이미 끝나 있다.
+    계산 중에 결과 화면 요청이 오면 같은 계산이 끝나기를 기다려 그 결과를 쓴다 (두 번 계산하지 않음).
+    """
+    try:
+        return PrewarmResponse(status=prewarm(req.startDate, req.decisions, req.baseTicker or '^SPX'))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post('/ai/analysis/coach', response_model=CoachResponse)
+def analysis_coach(req: BacktestRequest):
+    """
+    (#125) 사후 분석 AI 코치 한마디. 요청은 /ai/analysis/backtest와 같다 (분석 결과는 캐시에서 다시 가져옴).
+      - 요약·잘한 점·아쉬운 점·위기 대응: 프로그램이 사후 분석 숫자로 직접 작성 → LLM이 틀릴 수 없음
+      - 다음엔: LLM 한 문장. 검사(숫자·단정 표현·없는 카드·카드 조건 오기재·무조건부 카드 조건화)에 걸리면
+                규칙 기반 문장으로 바꾼다 (status='fallback')
+      - LLM 호출 실패 → 규칙 기반 문장 (status='failed'), 200 반환 (결과 화면에 영향 없음)
+    """
+    analysis = _run_analysis(req)
+    lines = result_coach.fact_lines(analysis)
+    fallback_tip = result_coach.rule_based_tip(analysis)
+
+    try:
+        text = ' '.join(strip_markdown(llm_text(result_coach.build_prompt(analysis), max_tokens=300)).split())
+    except Exception as e:
+        print(f'⚠️  LLM 코치 문장 생성 실패: {e}')
+        return CoachResponse(comment=result_coach.compose(lines, fallback_tip), verified=None, status='failed')
+
+    player_cards = [int(c) for c in req.playerCardSelections.values()]
+    issues = result_coach.check_tip(text, player_cards)
+    issues += [f'[조건부로 오기재] {x}' for x in unconditional_misdescribed(text)]
+    if not issues:
+        return CoachResponse(comment=result_coach.compose(lines, text), verified=True, status='llm')
+
+    print('⚠️  LLM 코치 문장 검사 실패 → 규칙 기반 문장으로 응답')
+    print(f'    원문: {text}')
+    for issue in issues:
+        print(f'    - {issue}')
+    return CoachResponse(comment=result_coach.compose(lines, fallback_tip), verified=False, status='fallback')
 
 
 # =============================================

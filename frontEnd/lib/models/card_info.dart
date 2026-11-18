@@ -1,5 +1,7 @@
 // 카드 정보 정의
 // 서버에서 cardId를 받으면 클라에서 이 정보로 UI를 그림
+// (#125) 설명은 종목 코드(SPX·NDX·AAPL) 대신 쉬운 말로 쓴다. 조건·비율·횟수 숫자는 서버 data.sql의 카드 규칙과 같아야 하고,
+//        backend/python_simulation/tests/test_card_sources.py가 이 파일과 서버 규칙이 어긋나지 않는지 확인한다.
 
 class CardInfo {
   final int id;
@@ -30,42 +32,42 @@ class CardInfo {
     CardInfo(
       id: 1,
       name: '거인의 어깨',
-      description: '보유 현금의 30%로\nS&P500 즉시 매수',
+      description: '고르는 즉시 현금의 30%로 S&P500 매수 (1번)',
       emoji: '🏛️',
       ticker: '^SPX',
     ),
     CardInfo(
       id: 2,
       name: '황금 적립',
-      description: '매 라운드\n보유 현금의 5%씩 금 매수',
+      description: '매 라운드 현금의 5%씩 금 매수',
       emoji: '🪙',
       ticker: 'GLD',
     ),
     CardInfo(
       id: 3,
       name: '공포탐욕',
-      description: 'SPX -3% 이하 시\n보유 현금의 20% SPX 매수',
+      description: 'S&P500이 하루 3% 이상 떨어진 날마다 현금의 20%로 S&P500 매수',
       emoji: '😱',
       ticker: '^SPX',
     ),
     CardInfo(
       id: 4,
       name: '금 피난처',
-      description: 'SPX -5% 이하 시\n보유 현금의 15% 금 매수',
+      description: 'S&P500이 하루 5% 이상 떨어진 날마다 현금의 15%로 금 매수',
       emoji: '🛡️',
       ticker: 'GLD',
     ),
     CardInfo(
       id: 5,
       name: '기술의 파도',
-      description: 'NDX +2% 이상 시\n보유 현금의 10% 나스닥 매수',
+      description: '나스닥이 하루 2% 이상 오른 날마다 현금의 10%로 나스닥 매수',
       emoji: '🌊',
       ticker: '^NDX',
     ),
     CardInfo(
       id: 6,
       name: '낙폭과대 사냥',
-      description: 'NDX -4% 이하 시\n보유 현금의 25% 나스닥 매수 (최대 3회)',
+      description: '나스닥이 하루 4% 이상 떨어진 날 현금의 25%로 나스닥 매수 (최대 3번)',
       emoji: '🎯',
       ticker: '^NDX',
     ),
@@ -73,35 +75,35 @@ class CardInfo {
     CardInfo(
       id: 7,
       name: '원유 베팅',
-      description: '보유 현금의 20%로\n원유 즉시 매수',
+      description: '고르는 즉시 현금의 20%로 원유 매수 (1번)',
       emoji: '🛢️',
       ticker: 'USO',
     ),
     CardInfo(
       id: 8,
       name: '역발상 투자',
-      description: 'SPX +3% 이상 시\n보유 S&P500의 15% 매도',
+      description: 'S&P500이 하루 3% 이상 오른 날마다 보유 S&P500의 15% 매도',
       emoji: '🔄',
       ticker: '^SPX',
     ),
     CardInfo(
       id: 9,
       name: '애플 줍줍',
-      description: 'AAPL -5% 이하 시\n보유 현금의 10% 애플 매수 (최대 5회)',
+      description: '애플이 하루 5% 이상 떨어진 날 현금의 10%로 애플 매수 (최대 5번)',
       emoji: '🍎',
       ticker: 'AAPL',
     ),
     CardInfo(
       id: 10,
       name: '채권 피난처',
-      description: '매 라운드\n보유 현금의 3%씩 채권 매수',
+      description: '매 라운드 현금의 3%씩 미국 장기채 매수',
       emoji: '📜',
       ticker: 'TLT',
     ),
     CardInfo(
       id: 11,
       name: '분할매수 장인',
-      description: '매 5라운드마다\n보유 현금의 10% 나스닥 매수',
+      description: '5라운드마다 현금의 10%로 나스닥 매수',
       emoji: '📊',
       ticker: '^NDX',
     ),

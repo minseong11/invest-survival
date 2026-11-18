@@ -158,8 +158,13 @@ class _RollingTextState extends State<RollingText> {
     final chars = widget.text.characters.toList();
     final n = chars.length;
     final dir = _up ? 1.0 : -1.0;
-    return ClipRect(
-      child: Row(
+    // (#125) 글자가 자리보다 넓으면 넘치지 않고 줄어들게 한다
+    //        (큰 글꼴 설정이나 긴 금액에서 오른쪽이 잘리던 것을 막음)
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: ClipRect(
+        child: Row(
         mainAxisSize: MainAxisSize.min,
         children: List.generate(n, (i) {
           final ch = chars[i];
@@ -189,6 +194,7 @@ class _RollingTextState extends State<RollingText> {
                 key: ValueKey('$fromRight:$ch'), style: widget.style),
           );
         }),
+        ),
       ),
     );
   }
@@ -435,13 +441,94 @@ String formatWon(double value) {
 
 String formatRate(double v) => '${v >= 0 ? '+' : ''}${v.toStringAsFixed(2)}%';
 
+// (#125) 부호를 항상 붙인 퍼센트: +12.3% / -4.5% (digits: 소수 자릿수, unit: '%' 또는 '%p')
+//   손실일 때 "(20.95%)"처럼 부호가 빠져 수익처럼 읽히던 문제를 막기 위해 한곳에서 만든다
+String formatSigned(double v, {int digits = 1, String unit = '%'}) {
+  final text = v.abs().toStringAsFixed(digits);
+  final zero = double.parse(text) == 0;
+  return '${zero ? '' : (v > 0 ? '+' : '-')}$text$unit';
+}
+
+// (#125) 금액을 짧게: 3,000,000 → "300만원", 12,340,000 → "1,234만원", 8,332 → "8,332원"
+String formatShortWon(double value) {
+  final v = value.abs();
+  if (v >= 10000) return '${formatWon((v / 10000).floorToDouble())}만원';
+  return '${formatWon(v)}원';
+}
+
+// (#125) 전체 조합 중 내 위치. 절반보다 위면 "상위 n%", 아래면 "하위 n%"
+//   (기존에는 하위권도 "상위 87.9%"로 표시됐다)
+String formatRankPosition(double topPercent) {
+  if (topPercent < 0.1) return '상위 0.1% 이내';
+  if (topPercent <= 50) return '상위 ${topPercent.toStringAsFixed(1)}%';
+  final bottom = 100 - topPercent;
+  return bottom < 0.1 ? '하위 0.1% 이내' : '하위 ${bottom.toStringAsFixed(1)}%';
+}
+
+// (#125) 화면 아래 큰 버튼(높이 56) 위에 띄운다.
+//   기존에는 버튼을 4초 동안 덮어, 알림이 떠 있는 동안 버튼을 눌러도 눌리지 않았다
 void showTossToast(BuildContext context, String message) {
   ScaffoldMessenger.of(context)
     ..hideCurrentSnackBar()
     ..showSnackBar(SnackBar(
       content: Text(message),
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      duration: const Duration(seconds: 3),
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 92),
     ));
+}
+
+// (#125) 두 버튼 확인 시트 — 오른쪽(확인)을 누르면 true, 왼쪽(취소)·바깥을 누르면 false
+Future<bool> showTossConfirm(
+  BuildContext context, {
+  required String title,
+  required String message,
+  required String confirmLabel,
+  String cancelLabel = '취소',
+}) async {
+  final ok = await showModalBottomSheet<bool>(
+    context: context,
+    backgroundColor: TossColors.white,
+    barrierColor: Colors.black.withValues(alpha: 0.4),
+    shape: const RoundedRectangleBorder(
+      borderRadius:
+          BorderRadius.vertical(top: Radius.circular(TossRadius.sheet)),
+    ),
+    builder: (ctx) => SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: TossText.title2),
+            const SizedBox(height: 8),
+            Text(message, style: TossText.sub),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(
+                  child: TossButton(
+                    label: cancelLabel,
+                    type: TossButtonType.secondary,
+                    onTap: () => Navigator.of(ctx).pop(false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TossButton(
+                    label: confirmLabel,
+                    onTap: () => Navigator.of(ctx).pop(true),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  return ok ?? false;
 }
 
 // 아래에서 올라오는 시트 (팝업 대신)
@@ -463,8 +550,9 @@ Future<void> showTossSheet(
     builder: (ctx) => SafeArea(
       top: false,
       child: ConstrainedBox(
+        // (#125) 0.8 → 0.88: AI 설명 시트에서 카드 규칙이 두 줄이 되면 마지막 안내 문장이 버튼 위에서 잘려 보였다
         constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(ctx).size.height * 0.8),
+            maxHeight: MediaQuery.of(ctx).size.height * 0.88),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(24, 28, 24, 16),
           child: Column(

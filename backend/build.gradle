@@ -7,10 +7,16 @@ plugins {
 group = 'com.capstone.survival'
 version = '0.0.1-SNAPSHOT'
 
+// (#125) JDK 17 이상이면 빌드된다 (결과물은 Java 17 기준).
+//   기존 toolchain 고정은 JDK 17이 따로 설치돼 있어야 해서, JDK 21만 있는 PC에서는 빌드가 되지 않았다.
 java {
-	toolchain {
-		languageVersion = JavaLanguageVersion.of(17)
-	}
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.release = 17
+	options.encoding = 'UTF-8'
 }
 
 configurations {

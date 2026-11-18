@@ -1,0 +1,12 @@
+# 테스트·CI에 필요한 패키지 (#125)
+#   pip install -r requirements-test.txt && pytest
+# 모델 학습에 쓰는 xgboost·scikit-learn·scipy는 테스트에 필요 없어 뺐다 (설치 시간·용량이 큼).
+# 서버를 실제로 돌리거나 모델을 학습할 때는 requirements.txt를 쓴다.
+pandas
+numpy
+anthropic
+fastapi
+uvicorn
+httpx
+pytest
+requests

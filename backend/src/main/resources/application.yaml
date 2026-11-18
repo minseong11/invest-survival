@@ -1,8 +1,9 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/survivor_db
-    username: postgres
-    password: 1234
+    # 접속 정보는 환경변수로 바꿀 수 있다 (없으면 아래 기본값) — 본인 환경에 맞춘 값을 커밋하지 않기 위해
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/survivor_db}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:1234}
     driver-class-name: org.postgresql.Driver
 
   sql:
@@ -12,7 +13,8 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    # SQL 로그는 기본으로 끈다 (요청마다 수십 줄씩 찍혀 오류 로그를 찾기 어려웠음). 필요하면 SHOW_SQL=true
+    show-sql: ${SHOW_SQL:false}
     properties:
       hibernate:
         format_sql: true
