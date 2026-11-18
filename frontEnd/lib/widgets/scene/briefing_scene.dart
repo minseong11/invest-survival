@@ -83,7 +83,8 @@ class _BriefingSceneState extends State<BriefingScene> {
     ];
     final last = _page >= pages.length - 1;
 
-    return SceneSheet(
+    return RevealScope(
+      child: SceneSheet(
       fullScreen: true,
       tag: SceneTag('📅 ${BriefingScene.longDate(widget.startDate)}'),
       trailing: last
@@ -106,10 +107,13 @@ class _BriefingSceneState extends State<BriefingScene> {
         controller: _pager,
         onPageChanged: (i) => setState(() => _page = i),
         children: [
+          // 장면마다 따로 착착 나타난다 (넘길 때마다 새로)
           for (final p in pages)
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-              child: p,
+            RevealScope(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                child: p,
+              ),
             ),
         ],
       ),
@@ -118,12 +122,16 @@ class _BriefingSceneState extends State<BriefingScene> {
         children: [
           _dots(pages.length),
           const SizedBox(height: 14),
-          TossButton(
-            label: last ? '첫 전략 고르기' : '다음',
-            onTap: () => _next(pages.length),
+          Reveal(
+            order: 5,
+            child: TossButton(
+              label: last ? '첫 전략 고르기' : '다음',
+              onTap: () => _next(pages.length),
+            ),
           ),
         ],
       ),
+    ),
     );
   }
 
@@ -159,22 +167,34 @@ class _BriefingSceneState extends State<BriefingScene> {
         const SizedBox(height: 24),
         MoodHero(mood: mood, size: 168),
         const SizedBox(height: 28),
-        Text(widget.scenarioTitle,
-            textAlign: TextAlign.center, style: TossText.title1),
+        Reveal(
+          order: 2,
+          child: Text(widget.scenarioTitle,
+              textAlign: TextAlign.center, style: TossText.title1),
+        ),
         const SizedBox(height: 10),
-        Text('오늘의 시장 날씨는 ‘${mood.label}’',
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w600,
-                color: TossColors.grey800)),
-        const SizedBox(height: 6),
-        Text(mood.line,
-            textAlign: TextAlign.center,
-            style: TossText.sub.copyWith(color: TossColors.grey600)),
+        Reveal(
+          order: 3,
+          child: Column(
+            children: [
+              Text('오늘의 시장 날씨는 ‘${mood.label}’',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w600,
+                      color: TossColors.grey800)),
+              const SizedBox(height: 6),
+              Text(mood.line,
+                  textAlign: TextAlign.center,
+                  style: TossText.sub.copyWith(color: TossColors.grey600)),
+            ],
+          ),
+        ),
         if (spx != null) ...[
           const SizedBox(height: 20),
-          Container(
+          Reveal(
+            order: 4,
+            child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             decoration: BoxDecoration(
               color: TossColors.grey50,
@@ -197,6 +217,7 @@ class _BriefingSceneState extends State<BriefingScene> {
               ],
             ),
           ),
+          ),
         ],
         const SizedBox(height: 16),
       ],
@@ -210,13 +231,15 @@ class _BriefingSceneState extends State<BriefingScene> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        const Text('📰', style: TextStyle(fontSize: 44)),
+        const Reveal(order: 0, child: Text('📰', style: TextStyle(fontSize: 44))),
         const SizedBox(height: 10),
-        const Text('무슨 일이\n있었나요?', style: TossText.title1),
+        const Reveal(
+            order: 1, child: Text('무슨 일이\n있었나요?', style: TossText.title1)),
         const SizedBox(height: 20),
+        // 말풍선은 한 줄씩 조금 더 천천히 (읽는 속도)
         for (int i = 0; i < lines.length; i++)
-          FadeInUp(
-            delay: Duration(milliseconds: 140 * i),
+          Reveal(
+            order: 3 + i * 2,
             child: Container(
               width: double.infinity,
               margin: const EdgeInsets.only(bottom: 8),
@@ -254,15 +277,25 @@ class _BriefingSceneState extends State<BriefingScene> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 8),
-        const Text('🗺️', style: TextStyle(fontSize: 44)),
+        const Reveal(order: 0, child: Text('🗺️', style: TextStyle(fontSize: 44))),
         const SizedBox(height: 10),
-        const Text('시작 전 시장 지도', style: TossText.title1),
-        const SizedBox(height: 6),
-        Text('게임 시작 직전 ${b.days}거래일 동안 이렇게 움직였어요',
-            style: TossText.sub.copyWith(color: TossColors.grey600)),
+        Reveal(
+          order: 1,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('시작 전 시장 지도', style: TossText.title1),
+              const SizedBox(height: 6),
+              Text('게임 시작 직전 ${b.days}거래일 동안 이렇게 움직였어요',
+                  style: TossText.sub.copyWith(color: TossColors.grey600)),
+            ],
+          ),
+        ),
         if (b.spxSeries.length >= 2) ...[
           const SizedBox(height: 18),
-          Container(
+          Reveal(
+            order: 2,
+            child: Container(
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
             decoration: BoxDecoration(
               color: TossColors.grey50,
@@ -288,6 +321,7 @@ class _BriefingSceneState extends State<BriefingScene> {
               ],
             ),
           ),
+          ),
         ],
         const SizedBox(height: 10),
         LayoutBuilder(builder: (_, c) {
@@ -299,8 +333,8 @@ class _BriefingSceneState extends State<BriefingScene> {
               for (int i = 0; i < b.assets.length; i++)
                 SizedBox(
                   width: w,
-                  child: FadeInUp(
-                    delay: Duration(milliseconds: 60 * i),
+                  child: Reveal(
+                    order: 3 + i,
                     child: AssetMoveTile(
                       ticker: b.assets[i].ticker,
                       name: b.assets[i].name,

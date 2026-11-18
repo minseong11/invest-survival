@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../models/market.dart';
 import '../../theme/toss_theme.dart';
@@ -10,8 +11,115 @@ import '../toss/toss_widgets.dart';
 //   - MoodHero   : 날씨 그림을 크게 띄우는 원형 일러스트
 //   - Sparkline  : 축·숫자 없는 흐름선 (아래 은은한 채움)
 //   - AssetMoveTile : 종목 하나의 등락 타일 (이모지 + 이름 + 등락)
-//   - SceneSheet : 게임 화면 위로 올라오는 장면 시트 (위: 장면 태그, 가운데: 내용, 아래: 고정 버튼)
+//   - SceneSheet : 게임 화면을 덮는 장면 (위: 장면 태그, 가운데: 내용, 아래: 고정 버튼)
+//   - RevealScope / Reveal : 장면 안 요소를 순서대로 착착 보여 주는 연출 (화면을 누르면 바로 전부)
 // =============================================
+
+// ── 순서대로 나타나기 ──────────────────────────
+//  RevealScope 안의 Reveal(order: n)은 n × step 뒤에 아래에서 살짝 올라오며 나타난다.
+//  전체가 1초 안에 끝나도록 step은 짧게. 화면 어디든 누르면 남은 연출을 건너뛰고 바로 전부 보인다.
+//  레이아웃은 처음부터 자리를 차지하므로(투명도만 바뀜) 버튼이 늦게 나타나도 화면이 밀리지 않는다.
+//  RevealScope가 없으면(예: 결과 '한 번에 보기') 연출 없이 바로 보인다.
+class RevealScope extends StatefulWidget {
+  final Widget child;
+  final Duration step;
+  const RevealScope({
+    super.key,
+    required this.child,
+    this.step = const Duration(milliseconds: 90),
+  });
+
+  @override
+  State<RevealScope> createState() => _RevealScopeState();
+}
+
+class _RevealScopeState extends State<RevealScope> {
+  bool _skipped = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) {
+        if (!_skipped) setState(() => _skipped = true);
+      },
+      child: _RevealInherited(
+        skipped: _skipped,
+        step: widget.step,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _RevealInherited extends InheritedWidget {
+  final bool skipped;
+  final Duration step;
+  const _RevealInherited({
+    required this.skipped,
+    required this.step,
+    required super.child,
+  });
+
+  @override
+  bool updateShouldNotify(_RevealInherited old) => old.skipped != skipped;
+}
+
+class Reveal extends StatefulWidget {
+  final int order;
+  final Widget child;
+  const Reveal({super.key, required this.order, required this.child});
+
+  @override
+  State<Reveal> createState() => _RevealState();
+}
+
+class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+      vsync: this, duration: const Duration(milliseconds: 320));
+  late final Animation<double> _a =
+      CurvedAnimation(parent: _c, curve: TossMotion.enter);
+  Timer? _timer;
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final scope = context.dependOnInheritedWidgetOfExactType<_RevealInherited>();
+    if (scope == null || scope.skipped) {
+      _timer?.cancel();
+      _c.value = 1;
+      return;
+    }
+    if (_started) return;
+    _started = true;
+    _timer = Timer(scope.step * widget.order, () {
+      if (mounted) _c.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _a,
+      builder: (_, child) => Opacity(
+        opacity: _a.value.clamp(0.0, 1.0),
+        child: Transform.translate(
+          offset: Offset(0, 14 * (1 - _a.value)),
+          child: child,
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
 
 // ── 시장 날씨 ─────────────────────────────────
 class MarketMood {

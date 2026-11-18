@@ -261,15 +261,18 @@ class _GameResultScreenState extends State<GameResultScreen> {
                         setState(() => _page = i);
                       },
                       children: [
+                        // 장면마다 안의 내용이 착착 나타난다 (누르면 바로 전부)
                         for (int i = 0; i < panels.length; i++)
-                          SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                FadeInUp(child: panels[i]),
-                                if (i >= 2) _afterGameNote(),
-                              ],
+                          RevealScope(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Reveal(order: 0, child: panels[i]),
+                                  if (i >= 2) _afterGameNote(),
+                                ],
+                              ),
                             ),
                           ),
                       ],
@@ -286,13 +289,20 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     _dots(panels.length, page),
                     const SizedBox(height: 14),
                   ],
-                  TossButton(
-                    label: (_listMode || last) ? '처음으로 돌아가기' : '다음',
-                    onTap: (_listMode || last)
-                        ? _goHome
-                        : () => _pager.nextPage(
-                            duration: TossMotion.slow,
-                            curve: TossMotion.enter),
+                  // 장면 내용이 나온 뒤 버튼이 보인다 (장면이 바뀔 때마다 다시)
+                  RevealScope(
+                    key: ValueKey('next-$page-$_listMode'),
+                    child: Reveal(
+                      order: _listMode ? 0 : 5,
+                      child: TossButton(
+                        label: (_listMode || last) ? '처음으로 돌아가기' : '다음',
+                        onTap: (_listMode || last)
+                            ? _goHome
+                            : () => _pager.nextPage(
+                                duration: TossMotion.slow,
+                                curve: TossMotion.enter),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -359,9 +369,12 @@ class _GameResultScreenState extends State<GameResultScreen> {
                 : const SizedBox(key: ValueKey('hero-off'), width: 112, height: 112),
           ),
           const SizedBox(height: 22),
-          Text(
-            '${widget.session.scenarioTitle} · ${widget.session.totalRounds}라운드 완료',
-            style: TossText.sub,
+          Reveal(
+            order: 1,
+            child: Text(
+              '${widget.session.scenarioTitle} · ${widget.session.totalRounds}라운드 완료',
+              style: TossText.sub,
+            ),
           ),
           const SizedBox(height: 8),
           Row(
@@ -760,8 +773,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
           ),
           for (int i = 0; i < _selectRounds.length; i++) ...[
             if (i > 0) Container(height: 1, color: TossColors.grey100),
-            _buildRoundBlock(_selectRounds[i], mine.cardAt(_selectRounds[i]),
-                o?.roundAt(_selectRounds[i])),
+            Reveal(
+              order: 2 + i,
+              child: _buildRoundBlock(_selectRounds[i],
+                  mine.cardAt(_selectRounds[i]), o?.roundAt(_selectRounds[i])),
+            ),
           ],
           if (o != null) ...[
             const SizedBox(height: 4),
@@ -906,8 +922,10 @@ class _GameResultScreenState extends State<GameResultScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionTitle('AI 코치 한마디'),
-          for (final line in coach.lines)
-            Padding(
+          for (final (i, line) in coach.lines.indexed)
+            Reveal(
+              order: 2 + i,
+              child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -944,6 +962,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
                 ],
               ),
             ),
+            ),
           const SizedBox(height: 8),
           Text(
             coach.byAi
@@ -968,7 +987,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
           _sectionTitle('카드별 성적표'),
           for (int i = 0; i < report.length; i++) ...[
             if (i > 0) Container(height: 1, color: TossColors.grey100),
-            _buildCardReportRow(report[i]),
+            Reveal(order: 2 + i, child: _buildCardReportRow(report[i])),
           ],
           const SizedBox(height: 6),
           const Text(
@@ -1072,9 +1091,9 @@ class _GameResultScreenState extends State<GameResultScreen> {
               style: TossText.sub.copyWith(
                   fontSize: 15, color: TossColors.grey700)),
           const SizedBox(height: 6),
-          for (final r in review.rounds) ...[
+          for (int i = 0; i < review.rounds.length; i++) ...[
             Container(height: 1, color: TossColors.grey100),
-            _buildDecisionBlock(r),
+            Reveal(order: 2 + i, child: _buildDecisionBlock(review.rounds[i])),
           ],
           const Text(
             '다른 선택은 그대로 두고, 그 속보에서의 대응만 바꿨을 때 결과예요.',

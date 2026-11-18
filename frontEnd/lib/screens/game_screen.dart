@@ -1126,9 +1126,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   // =============================================
   // (장면 개편) 장면 레이어
-  //  선택해야 하는 순간에 게임 화면 위로 시트가 올라온다 (뒤는 어둡게).
-  //  ① 시작 브리핑(화면 전체, 넘겨 보는 3장면) → ② 카드 선택 → 고르면 시트가 내려가고 게임이 이어진다.
-  //  위기 대응도 같은 시트에 '속보' 장면으로 뜬다.
+  //  선택해야 하는 순간에 게임 화면 전체를 덮는 장면이 뜬다 (같은 화면 안이라 뒤로 가기·상태 전달이 단순).
+  //  ① 시작 브리핑(넘겨 보는 3장면) → ② 카드 선택(아래에서 올라옴) → 고르면 장면이 내려가고 게임이 이어진다.
+  //  ③ 위기 대응은 '속보' 장면: 짧은 플래시와 함께 툭 내려앉는다.
+  //  장면 위쪽에 라운드·날짜, 본문 첫머리에 내 자산·S&P500 흐름을 둬서 게임 맥락을 잃지 않게 한다.
   // =============================================
   bool get _showBriefing =>
       _notStarted && !_briefingDone && _session.briefing?.isEmpty == false;
@@ -1158,22 +1159,35 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             duration: TossMotion.slow,
             switchInCurve: TossMotion.enter,
             switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, anim) => SlideTransition(
-              position: Tween<Offset>(
-                begin: const Offset(0, 1),
-                end: Offset.zero,
-              ).animate(anim),
-              child: child,
-            ),
+            transitionBuilder: (child, anim) {
+              final k = child.key;
+              // 속보: 살짝 크게 시작해 제자리로 '툭' + 페이드
+              if (k is ValueKey<String> && k.value.startsWith('decision')) {
+                return FadeTransition(
+                  opacity: anim,
+                  child: ScaleTransition(
+                    scale: Tween<double>(begin: 1.06, end: 1).animate(anim),
+                    child: child,
+                  ),
+                );
+              }
+              // 브리핑·카드 선택: 아래에서 올라옴
+              return SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 1),
+                  end: Offset.zero,
+                ).animate(anim),
+                child: child,
+              );
+            },
             layoutBuilder: (current, previous) => Stack(
               fit: StackFit.expand,
               children: [...previous, if (current != null) current],
             ),
             child: !show
                 ? const SizedBox.shrink(key: ValueKey('scene-none'))
-                : Padding(
+                : KeyedSubtree(
                     key: ValueKey(_sceneKey),
-                    padding: EdgeInsets.only(top: _showBriefing ? 0 : 28),
                     child: _showBriefing
                         ? BriefingScene(
                             briefing: _session.briefing!,
@@ -1191,6 +1205,26 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         ],
       ),
     );
+  }
+
+  // 장면 오른쪽 위 닫기: 게임 나가기 (게임 중이면 PopScope가 한 번 묻는다)
+  Widget _sceneClose() {
+    return Pressable(
+      onTap: () => Navigator.maybePop(context),
+      haptic: false,
+      child: const Padding(
+        padding: EdgeInsets.all(8),
+        child: Icon(Icons.close_rounded, size: 24, color: TossColors.grey500),
+      ),
+    );
+  }
+
+  // "25라운드 · 3월 24일"
+  String get _sceneWhen {
+    final today = _todayMarket;
+    return today == null
+        ? '$_currentRound1라운드'
+        : '$_currentRound1라운드 · ${TodayMarketCard.koreanDate(today.date)}';
   }
 
   // 장면 안의 '지금 내 상황' 한 줄: 내 자산 + 게임 시작 후 S&P500 흐름선
@@ -1271,21 +1305,31 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final ord   = n < _ordinals.length ? _ordinals[n] : '다음';
     final today = _todayMarket;
 
-    return SceneSheet(
-      tag: SceneTag('🃏 $_currentRound1라운드 · 전략 고르기',
+    // 순서대로 착착: 제목 → 내 상황 → 오늘 시장 → 안내·AI → 후보 카드 → 확정 버튼 (화면을 누르면 바로 전부)
+    return RevealScope(
+      child: SceneSheet(
+      fullScreen: true,
+      tag: SceneTag('🃏 $_sceneWhen',
           bg: TossColors.blue50, fg: TossColors.blue600),
+      trailing: _sceneClose(),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('$ord 전략을\n골라주세요', style: TossText.title1),
+          Reveal(
+            order: 0,
+            child: Text('$ord 전략을\n골라주세요', style: TossText.title1),
+          ),
           const SizedBox(height: 18),
           if (!_notStarted) ...[
-            _buildSceneStatus(),
+            Reveal(order: 1, child: _buildSceneStatus()),
             const SizedBox(height: 8),
           ],
           // (#125) 오늘 시장 — 그날 종가로 매매하므로 그날 움직임을 보고 고른다
           if (today != null) ...[
-            TodayMarketCard(today: today, caption: _todayCaption),
+            Reveal(
+              order: 2,
+              child: TodayMarketCard(today: today, caption: _todayCaption),
+            ),
             const SizedBox(height: 8),
           ],
 
@@ -1312,27 +1356,28 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
           // AI 도우미: 25·50라운드만. 1·75라운드는 제공하지 않는 이유를 한 줄로
           if (_canUseV2)
-            _buildAiHelper()
+            Reveal(order: 3, child: _buildAiHelper())
           else if (_noAiReason != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
-              child: Text(_noAiReason!, style: TossText.small),
+            Reveal(
+              order: 3,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                child: Text(_noAiReason!, style: TossText.small),
+              ),
             ),
 
           const SizedBox(height: 14),
-          const Text('후보 카드', style: TossText.small),
+          const Reveal(order: 3, child: Text('후보 카드', style: TossText.small)),
           const SizedBox(height: 4),
           ...List.generate(_currentCardOptions.length, (i) {
             final card = CardInfo.fromId(_currentCardOptions[i]);
             if (card == null) return const SizedBox.shrink();
-            return FadeInUp(
-              delay: Duration(milliseconds: 80 * i),
-              child: _buildCardItem(card),
-            );
+            return Reveal(order: 4 + i, child: _buildCardItem(card));
           }),
         ],
       ),
-      bottom: _buildConfirmButton(),
+      bottom: Reveal(order: 6, child: _buildConfirmButton()),
+    ),
     );
   }
 
@@ -1387,12 +1432,20 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final good   = prompt?.news.level == 'positive';
     final today  = _todayMarket;
 
-    return SceneSheet(
+    final flash = switch (prompt?.news.level) {
+      'danger'   => TossColors.orange500,
+      'positive' => TossColors.green500,
+      _          => TossColors.grey500,
+    };
+
+    final sheet = SceneSheet(
+      fullScreen: true,
       tag: good
-          ? SceneTag('📣 $_currentRound1라운드 · 기회',
+          ? SceneTag('📣 $_sceneWhen · 기회',
               bg: TossColors.green50, fg: const Color(0xFF02874F))
-          : SceneTag('🚨 $_currentRound1라운드 · 위기 대응',
+          : SceneTag('🚨 $_sceneWhen · 위기 대응',
               bg: const Color(0xFFFFF3E0), fg: const Color(0xFFC25E00)),
+      trailing: _sceneClose(),
       body: DecisionSelector(
         prompt:        prompt,
         otherNews:     _selectNews,
@@ -1414,7 +1467,26 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
-      bottom: _buildDecisionButton(),
+      bottom: Reveal(order: 6, child: _buildDecisionButton()),
+    );
+
+    // 속보가 뜰 때 화면 전체가 한 번 번쩍 (위험 주황 / 긍정 초록) → 0.6초 동안 사라짐
+    return RevealScope(
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          sheet,
+          IgnorePointer(
+            child: TweenAnimationBuilder<double>(
+              tween: Tween(begin: 1, end: 0),
+              duration: const Duration(milliseconds: 600),
+              curve: Curves.easeOutCubic,
+              builder: (_, v, __) =>
+                  Container(color: flash.withValues(alpha: 0.5 * v)),
+            ),
+          ),
+        ],
+      ),
     );
   }
 

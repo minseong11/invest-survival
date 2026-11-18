@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/decision.dart';
 import '../models/news_item.dart';
 import '../theme/toss_theme.dart';
+import 'scene/scene_widgets.dart';
 import 'toss/toss_widgets.dart';
 
 // =============================================
@@ -41,31 +42,43 @@ class DecisionSelector extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // 순서: 속보(툭) → 내 상황·오늘 시장 → 질문 → 선택지 착착 (장면 안에서만 연출, 없으면 바로 보임)
         if (news != null) ...[
           BreakingNewsCard(news: news),
           const SizedBox(height: 12),
         ],
         if (info != null) ...[
-          info!,
+          Reveal(order: 2, child: info!),
           const SizedBox(height: 12),
         ],
         const SizedBox(height: 10),
-        const Text('어떻게 대응할까요?', style: TossText.title2),
-        for (final n in otherNews)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Text('· ${n.headline}', style: TossText.caption),
+        Reveal(
+          order: 3,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('어떻게 대응할까요?', style: TossText.title2),
+              for (final n in otherNews)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text('· ${n.headline}', style: TossText.caption),
+                ),
+            ],
           ),
+        ),
         const SizedBox(height: 12),
         for (int i = 0; i < DecisionChoice.all.length; i++)
-          FadeInUp(
-            delay: Duration(milliseconds: 80 * i),
+          Reveal(
+            order: 4 + i,
             child: _buildChoice(DecisionChoice.all[i]),
           ),
         const SizedBox(height: 6),
-        const Text(
-          '오늘 종가로 바로 매매하고, 전략 카드는 계속 작동해요.',
-          style: TossText.small,
+        const Reveal(
+          order: 6,
+          child: Text(
+            '오늘 종가로 바로 매매하고, 전략 카드는 계속 작동해요.',
+            style: TossText.small,
+          ),
         ),
       ],
     );

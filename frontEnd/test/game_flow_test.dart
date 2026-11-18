@@ -117,7 +117,7 @@ void main() {
     expect(find.text('어떻게 대응할까요?'), findsOneWidget);
     expect(find.text('테스트 속보 10라운드'), findsOneWidget);
     expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
-    expect(find.text('10'), findsWidgets);                            // 헤더 라운드
+    expect(find.textContaining('🚨 10라운드 · 9월 11일'), findsOneWidget); // 전체 화면 장면 위쪽에 라운드·날짜
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
@@ -153,7 +153,8 @@ void main() {
     // ── 60라운드: 위기 대응 (좋은 소식) ──
     await _playUntil(tester, find.text('대응을 골라주세요'));
     expect(find.text('📣 희소식'), findsOneWidget);
-    expect(find.text('📣 60라운드 · 기회'), findsOneWidget);
+    expect(find.textContaining('60라운드 · '), findsWidgets);           // 장면 위쪽: 라운드·날짜
+    expect(find.textContaining('· 기회'), findsOneWidget);
     await _tap(tester, find.text('버틴다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:60:HOLD'));
