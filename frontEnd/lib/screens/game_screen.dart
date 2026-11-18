@@ -5,6 +5,7 @@ import '../models/game_session.dart';
 import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
+import '../models/fixed_ranking.dart';
 import '../models/decision.dart';
 import '../models/market.dart';
 import '../models/news_item.dart';
@@ -396,11 +397,28 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             ),
           ],
 
-          // ④ 참고용 안내 (평가 결과 반영)
-          const SizedBox(height: 12),
+          // ④ 평소 순위와 나란히 (12주차 피드백 2번)
+          if (_fixedOrder.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            Text.rich(
+              TextSpan(children: [
+                const TextSpan(
+                    text: '평소 순위  ',
+                    style: TextStyle(fontWeight: FontWeight.w700)),
+                TextSpan(
+                    text: _fixedOrder
+                        .map((id) => CardInfo.fromId(id)?.name ?? '카드 $id')
+                        .join(' › ')),
+              ]),
+              style: TossText.caption.copyWith(color: TossColors.grey700),
+            ),
+          ],
+
+          // ⑤ 참고용 안내 (평가 결과 반영)
+          const SizedBox(height: 8),
           const Text(
             'AI 예측은 과거 시장으로 학습한 참고용이에요. S&P500의 흐름과 고른 카드만 보고 판단하고, '
-            '처음 보는 시장에서는 틀릴 수 있어요.',
+            '처음 보는 시장 테스트에서는 평소 순위보다 낫지 않았어요.',
             style: TossText.small,
           ),
         ],
@@ -1355,9 +1373,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ],
 
           // AI 도우미: 25·50라운드만. 1·75라운드는 제공하지 않는 이유를 한 줄로
-          if (_canUseV2)
-            Reveal(order: 3, child: _buildAiHelper())
-          else if (_noAiReason != null)
+          if (_canUseV2) ...[
+            Reveal(order: 3, child: _buildAiHelper()),
+            if (_fixedOrder.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Reveal(order: 3, child: _buildFixedRanking()),
+            ],
+          ] else if (_noAiReason != null)
             Reveal(
               order: 3,
               child: Padding(
@@ -1378,6 +1400,83 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       ),
       bottom: Reveal(order: 6, child: _buildConfirmButton()),
     ),
+    );
+  }
+
+  // =============================================
+  // (12주차 피드백 2번) 평소 순위(고정 순위) 복원
+  //  평소 순위 = 학습 기간(2006~2018) 이 라운드에서 각 카드가 낸 평균 기여도 순서. 지금 시장은 보지 않는다.
+  //  7주차 평가에서 V2가 처음 보는 시장에서 이 기준보다 낫다는 근거를 찾지 못했으므로,
+  //  AI 예측과 나란히 보여 주고 비교하게 한다 (#121에서 빠졌던 것을 다시 넣음)
+  // =============================================
+  List<int> get _fixedOrder =>
+      FixedRanking.order(_currentRound1, _currentCardOptions);
+
+  static const String _v2Notice =
+      'AI 예측은 과거 시장으로 학습한 참고용이에요. '
+      '처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요.';
+
+  Widget _buildFixedRanking() {
+    final order = _fixedOrder;
+    if (order.isEmpty) return const SizedBox.shrink();
+    final aiPick = _aiState == AiState.done ? _v2RecommendedCardId : null;
+    const medals = ['🥇', '🥈', '🥉'];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: TossColors.grey50,
+        borderRadius: BorderRadius.circular(TossRadius.lg),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Text('📊 평소 순위', style: TossText.body2),
+              SizedBox(width: 6),
+              Expanded(
+                child: Text('지금 시장은 보지 않는 기준',
+                    style: TossText.small, overflow: TextOverflow.ellipsis),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (int i = 0; i < order.length; i++)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: [
+                  // 메달과 이름을 한 줄 글자로 (아래 후보 카드 이름과 구분)
+                  Expanded(
+                    child: Text(
+                        '${i < medals.length ? medals[i] : '${i + 1}'}  '
+                        '${CardInfo.fromId(order[i])?.name ?? '카드 ${order[i]}'}',
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: TossColors.grey800)),
+                  ),
+                  if (order[i] == aiPick)
+                    const TossBadge(
+                      label: 'AI 예측 1위',
+                      bg: TossColors.blue50,
+                      fg: TossColors.blue600,
+                    ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 6),
+          Text(
+            aiPick == null
+                ? _v2Notice
+                : aiPick == order.first
+                    ? 'AI 예측 1위와 평소 1위가 같아요. $_v2Notice'
+                    : 'AI 예측 1위가 평소 1위와 달라요. $_v2Notice',
+            style: TossText.small,
+          ),
+        ],
+      ),
     );
   }
 

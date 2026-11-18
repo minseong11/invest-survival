@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_application_1/models/coach_comment.dart';
+import 'package:flutter_application_1/models/result_analysis.dart';
+import 'package:flutter_application_1/models/v2_recommend_result.dart';
 import 'package:flutter_application_1/screens/game_screen.dart';
 import 'package:flutter_application_1/screens/scenario_screen.dart';
 import 'package:flutter_application_1/theme/toss_theme.dart';
@@ -304,6 +307,51 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
+  testWidgets('AI 서버가 응답하지 않으면 화면에 안내가 뜨고 다시 시도할 수 있다', (tester) async {
+    final fake = _AiDownService();
+    await _pumpApp(tester, fake);
+    await _startSkippingBriefing(tester);
+    await _tap(tester, find.text('황금 적립'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+
+    // 25라운드: 평소 순위는 AI 없이도 보이고, AI 예측 실패는 안내 + 다시 시도
+    await _playUntil(tester, find.text('AI 예측'));
+    expect(find.text('📊 평소 순위'), findsOneWidget);
+    expect(find.textContaining('처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요'), findsOneWidget);
+    await _tap(tester, find.text('AI 예측'));
+    expect(find.text('예측을 받지 못했어요'), findsOneWidget);
+    expect(find.text('다시 시도'), findsOneWidget);
+    // AI 없이도 카드는 고를 수 있다
+    await _tap(tester, find.text('금 피난처'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+
+    await _playUntil(tester, find.text('전략을 골라주세요'));          // 50라운드
+    await _tap(tester, find.text('거인의 어깨'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+    await _playUntil(tester, find.text('전략을 골라주세요'));          // 75라운드
+    await _tap(tester, find.text('기술의 파도'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+    await _playUntil(tester, find.text('결과 보기'));
+    await _tap(tester, find.text('결과 보기'));
+    await tester.pump(const Duration(seconds: 1));
+    await _settle(tester);
+
+    // 결과: 사후 분석 실패 → 안내 + 다시 시도 → 성공하면 분석이 나오고, AI 코치 실패는 따로 안내
+    await _pageUntil(tester, find.text('사후 분석을 불러오지 못했어요'));
+    await _tap(tester, find.text('다시 시도'));
+    await _settle(tester);
+    expect(find.text('사후 분석을 불러오지 못했어요'), findsNothing);
+    expect(fake.analysisTries, 2);
+    await _pageUntil(tester, find.text('AI 코치 한마디를 받지 못했어요'));
+    fake.coachDown = false;
+    await _tap(tester, find.text('다시 시도'));
+    await _settle(tester);
+    expect(find.text('AI 코치 한마디'), findsOneWidget);
+    expect(find.text('테스트 코치 문장이에요.'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 6));
+  });
+
   testWidgets('가진 자산·현금이 없으면 그 대응은 고를 수 없다', (tester) async {
     String? picked;
     await tester.pumpWidget(MaterialApp(
@@ -342,4 +390,42 @@ void main() {
 class _FailingService extends FakeGameService {
   @override
   Future<List<Never>> getScenarios() async => throw Exception('서버에 연결할 수 없어요');
+}
+
+// AI 서버가 꺼진 상황: 예측은 실패, 사후 분석은 처음 한 번 실패, AI 코치는 coachDown 동안 실패
+class _AiDownService extends FakeGameService {
+  _AiDownService() : super(decisionRounds: const []);
+
+  int analysisTries = 0;
+  bool coachDown = true;
+
+  @override
+  Future<V2RecommendResult> getV2Recommendation({
+    required String sessionId,
+    required int currentRound,
+    required List<int> alreadyCards,
+    required List<int> candidateCards,
+  }) async {
+    calls.add('ai:$currentRound');
+    throw Exception('AI 서버에 연결할 수 없어요');
+  }
+
+  @override
+  Future<ResultAnalysis?> getResultAnalysis({required String sessionId}) async {
+    analysisTries++;
+    if (analysisTries == 1) {
+      calls.add('analysis');
+      return null;
+    }
+    return super.getResultAnalysis(sessionId: sessionId);
+  }
+
+  @override
+  Future<CoachComment?> getResultCoach({required String sessionId}) async {
+    if (coachDown) {
+      calls.add('coach');
+      return null;
+    }
+    return super.getResultCoach(sessionId: sessionId);
+  }
 }

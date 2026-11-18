@@ -136,6 +136,47 @@ class _GameResultScreenState extends State<GameResultScreen> {
     if (result != null) _loadCoach();
   }
 
+  // (12주차 피드백 2번) AI 호출 실패 시 안내 + 다시 시도 (기존: 그 칸이 조용히 사라졌다)
+  void _retryAnalysis() {
+    setState(() {
+      _analysisLoading = true;
+      _coachLoading    = false;
+    });
+    _loadAnalysis();
+  }
+
+  void _retryCoach() {
+    setState(() => _coachLoading = true);
+    _loadCoach();
+  }
+
+  Widget _buildFailedCard({
+    required String emoji,
+    required String title,
+    required String body,
+    required VoidCallback onRetry,
+  }) {
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 40)),
+          const SizedBox(height: 10),
+          Text(title, style: TossText.title3),
+          const SizedBox(height: 6),
+          Text(body, style: TossText.sub),
+          const SizedBox(height: 16),
+          TossButton(
+            label: '다시 시도',
+            type: TossButtonType.secondary,
+            onTap: onRetry,
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadCoach() async {
     final coach = await _gameService.getResultCoach(
       sessionId: widget.session.sessionId,
@@ -180,13 +221,29 @@ class _GameResultScreenState extends State<GameResultScreen> {
       _buildCompareBars(),
       if (_analysisLoading)
         _buildAnalysisLoading()
-      else if (a != null) ...[
+      else if (a == null)
+        _buildFailedCard(
+          emoji: '😥',
+          title: '사후 분석을 불러오지 못했어요',
+          body: '게임 결과와 시장 비교는 위에 그대로 있어요. '
+              'AI 서버가 잠시 응답하지 않았을 수 있어요.',
+          onRetry: _retryAnalysis,
+        )
+      else ...[
         o != null ? _buildOfferedRankCard(a, o) : _buildRankCard(a),
         _buildRoundReviewCard(o),
         if (a.cardReport.isNotEmpty) _buildCardReportCard(a.cardReport),
         if (a.decisionReview != null && a.decisionReview!.rounds.isNotEmpty)
           _buildDecisionReviewCard(a.decisionReview!),
-        if (_coach != null || _coachLoading) _buildCoachCard(),
+        if (_coach != null || _coachLoading)
+          _buildCoachCard()
+        else
+          _buildFailedCard(
+            emoji: '🤖',
+            title: 'AI 코치 한마디를 받지 못했어요',
+            body: '사후 분석 결과는 그대로 볼 수 있어요. AI 서버 연결을 확인한 뒤 다시 시도해 주세요.',
+            onRetry: _retryCoach,
+          ),
         if (a.epilogue != null && a.epilogue!.points.isNotEmpty)
           _buildEpilogueCard(a.epilogue!),
       ],
