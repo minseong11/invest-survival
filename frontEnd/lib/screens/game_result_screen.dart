@@ -9,6 +9,7 @@ import '../models/result_analysis.dart';
 import '../models/round_data.dart';
 import '../services/game_service.dart';
 import '../widgets/news_banner.dart';
+import '../widgets/scene/scene_widgets.dart';
 import '../theme/toss_theme.dart';
 import '../widgets/toss/toss_widgets.dart';
 
@@ -46,6 +47,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
   bool _coachLoading = false;
 
   static const List<int> _selectRounds = [1, 25, 50, 75];
+
+  // (장면 개편) 결과를 한 장씩 넘겨 본다. '한 번에 보기'를 누르면 기존처럼 한 페이지로
+  final PageController _pager = PageController();
+  int _page = 0;
+  bool _listMode = false;
 
   double get _finalAsset {
     for (int i = widget.session.rounds.length - 1; i >= 0; i--) {
@@ -130,6 +136,47 @@ class _GameResultScreenState extends State<GameResultScreen> {
     if (result != null) _loadCoach();
   }
 
+  // (12주차 피드백 2번) AI 호출 실패 시 안내 + 다시 시도 (기존: 그 칸이 조용히 사라졌다)
+  void _retryAnalysis() {
+    setState(() {
+      _analysisLoading = true;
+      _coachLoading    = false;
+    });
+    _loadAnalysis();
+  }
+
+  void _retryCoach() {
+    setState(() => _coachLoading = true);
+    _loadCoach();
+  }
+
+  Widget _buildFailedCard({
+    required String emoji,
+    required String title,
+    required String body,
+    required VoidCallback onRetry,
+  }) {
+    return TossSection(
+      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(emoji, style: const TextStyle(fontSize: 40)),
+          const SizedBox(height: 10),
+          Text(title, style: TossText.title3),
+          const SizedBox(height: 6),
+          Text(body, style: TossText.sub),
+          const SizedBox(height: 16),
+          TossButton(
+            label: '다시 시도',
+            type: TossButtonType.secondary,
+            onTap: onRetry,
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _loadCoach() async {
     final coach = await _gameService.getResultCoach(
       sessionId: widget.session.sessionId,
@@ -144,6 +191,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
   @override
   void dispose() {
     _revealTimer?.cancel();
+    _pager.dispose();
     super.dispose();
   }
 
@@ -158,47 +206,196 @@ class _GameResultScreenState extends State<GameResultScreen> {
       ? c.cardName
       : (CardInfo.fromId(c.cardId)?.name ?? '카드 ${c.cardId}');
 
+  // =============================================
+  // (장면 개편) 결과 패널 — 한 장씩 넘기는 결과창
+  //  ① 결과 → ② 시장과 비교 → ③ 내 순위 → ④ 라운드별로 → ⑤ 카드별 성적표 → ⑥ 위기 대응
+  //  → ⑦ AI 코치 → ⑧ 그 후 이야기 (마지막 장면)
+  //  사후 분석은 ①·②를 보는 동안 계산되고, 아직이면 ③ 자리에 계산 중 장면이 보인다.
+  //  '참고: 이 시장에서 가장 잘 통한 전략'(11장 전체 1위)은 게임 중 고를 수 없던 카드라 뺐다.
+  // =============================================
+  List<Widget> _panels() {
+    final a = _analysis;
+    final o = a?.offered;
+    return [
+      _buildHero(),
+      _buildCompareBars(),
+      if (_analysisLoading)
+        _buildAnalysisLoading()
+      else if (a == null)
+        _buildFailedCard(
+          emoji: '😥',
+          title: '사후 분석을 불러오지 못했어요',
+          body: '게임 결과와 시장 비교는 위에 그대로 있어요. '
+              'AI 서버가 잠시 응답하지 않았을 수 있어요.',
+          onRetry: _retryAnalysis,
+        )
+      else ...[
+        o != null ? _buildOfferedRankCard(a, o) : _buildRankCard(a),
+        _buildRoundReviewCard(o),
+        if (a.cardReport.isNotEmpty) _buildCardReportCard(a.cardReport),
+        if (a.decisionReview != null && a.decisionReview!.rounds.isNotEmpty)
+          _buildDecisionReviewCard(a.decisionReview!),
+        if (_coach != null || _coachLoading)
+          _buildCoachCard()
+        else
+          _buildFailedCard(
+            emoji: '🤖',
+            title: 'AI 코치 한마디를 받지 못했어요',
+            body: '사후 분석 결과는 그대로 볼 수 있어요. AI 서버 연결을 확인한 뒤 다시 시도해 주세요.',
+            onRetry: _retryCoach,
+          ),
+        if (a.epilogue != null && a.epilogue!.points.isNotEmpty)
+          _buildEpilogueCard(a.epilogue!),
+      ],
+    ];
+  }
+
+  void _goHome() => Navigator.of(context).popUntil((route) => route.isFirst);
+
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
+    final panels = _panels();
+    final page = _page.clamp(0, panels.length - 1);
+    final last = page >= panels.length - 1;
 
     return Scaffold(
-      backgroundColor: TossColors.background,
+      // 한 장씩: 흰 바탕 위에 패널 하나 / 한 번에: 회색 바탕 위에 흰 패널을 쌓음
+      backgroundColor: _listMode ? TossColors.background : TossColors.white,
       body: SafeArea(
         bottom: false,
         child: Column(
           children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    FadeInUp(child: _buildHero()),
-                    const SizedBox(height: 8),
-                    FadeInUp(
-                      delay: const Duration(milliseconds: 120),
-                      child: _buildCompareBars(),
+            // 위: 진행 표시 + 보기 방식
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 12, 12, 0),
+              child: Row(
+                children: [
+                  Text(
+                    _listMode ? '결과 한 번에 보기' : '${page + 1} / ${panels.length}',
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: TossColors.grey500,
+                        fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                  const Spacer(),
+                  Pressable(
+                    onTap: () => setState(() => _listMode = !_listMode),
+                    haptic: false,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      child: Text(_listMode ? '한 장씩 보기' : '한 번에 보기',
+                          style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: TossColors.blue500)),
                     ),
-                    const SizedBox(height: 8),
-                    _buildAnalysisSection(),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
+            Expanded(
+              child: _listMode
+                  ? SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final p in panels) ...[
+                            p,
+                            const SizedBox(height: 8),
+                          ],
+                          _afterGameNote(),
+                        ],
+                      ),
+                    )
+                  : PageView(
+                      controller: _pager,
+                      onPageChanged: (i) {
+                        HapticFeedback.selectionClick();
+                        setState(() => _page = i);
+                      },
+                      children: [
+                        // 장면마다 안의 내용이 착착 나타난다 (누르면 바로 전부)
+                        for (int i = 0; i < panels.length; i++)
+                          RevealScope(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(0, 8, 0, 16),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Reveal(order: 0, child: panels[i]),
+                                  if (i >= 2) _afterGameNote(),
+                                ],
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+            ),
 
-            // 처음으로 (하단 고정)
+            // 아래: 페이지 점 + 다음 / 처음으로
             Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
-              child: TossButton(
-                label: '처음으로 돌아가기',
-                onTap: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                },
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (!_listMode) ...[
+                    _dots(panels.length, page),
+                    const SizedBox(height: 14),
+                  ],
+                  // 장면 내용이 나온 뒤 버튼이 보인다 (장면이 바뀔 때마다 다시)
+                  RevealScope(
+                    key: ValueKey('next-$page-$_listMode'),
+                    child: Reveal(
+                      order: _listMode ? 0 : 5,
+                      child: TossButton(
+                        label: (_listMode || last) ? '처음으로 돌아가기' : '다음',
+                        onTap: (_listMode || last)
+                            ? _goHome
+                            : () => _pager.nextPage(
+                                duration: TossMotion.slow,
+                                curve: TossMotion.enter),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _dots(int n, int page) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (int i = 0; i < n; i++)
+          AnimatedContainer(
+            duration: TossMotion.base,
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            width: i == page ? 18 : 6,
+            height: 6,
+            decoration: BoxDecoration(
+              color: i == page ? TossColors.blue500 : TossColors.grey200,
+              borderRadius: BorderRadius.circular(3),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _afterGameNote() {
+    return const Padding(
+      padding: EdgeInsets.fromLTRB(24, 4, 24, 0),
+      child: Text(
+        '게임이 끝난 뒤 100라운드 시장 데이터를 모두 써서 계산한 결과예요. '
+        '게임 중에는 알 수 없는 정보예요.',
+        style: TossText.small,
       ),
     );
   }
@@ -217,13 +414,24 @@ class _GameResultScreenState extends State<GameResultScreen> {
     final diff    = asset - initial;
 
     return TossSection(
-      padding: const EdgeInsets.fromLTRB(24, 28, 24, 28),
+      padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '${widget.session.scenarioTitle} · ${widget.session.totalRounds}라운드 완료',
-            style: TossText.sub,
+          // (장면 개편) 결과를 그림 하나로 먼저: 🏆 시장보다 잘함 / 🛡️ 시장보다 덜 잃음 / 🌱 수익 / 🌧️ 손실
+          AnimatedSwitcher(
+            duration: TossMotion.slow,
+            child: _revealed
+                ? MoodHero(key: const ValueKey('hero-on'), mood: _heroMood(profit), size: 112)
+                : const SizedBox(key: ValueKey('hero-off'), width: 112, height: 112),
+          ),
+          const SizedBox(height: 22),
+          Reveal(
+            order: 1,
+            child: Text(
+              '${widget.session.scenarioTitle} · ${widget.session.totalRounds}라운드 완료',
+              style: TossText.sub,
+            ),
           ),
           const SizedBox(height: 8),
           Row(
@@ -280,6 +488,20 @@ class _GameResultScreenState extends State<GameResultScreen> {
         ],
       ),
     );
+  }
+
+  MarketMood _heroMood(bool celebrate) {
+    final mine = _finalReturnRate;
+    if (celebrate && mine >= 0) {
+      return const MarketMood('🏆', '', '', [Color(0xFFFFF6E5), Color(0xFFFFE6BA)]);
+    }
+    if (_beatMarket) {
+      return const MarketMood('🛡️', '', '', [Color(0xFFE8F3FF), Color(0xFFCFE2FA)]);
+    }
+    if (mine >= 0) {
+      return const MarketMood('🌱', '', '', [Color(0xFFE5F8EF), Color(0xFFC9EEDC)]);
+    }
+    return const MarketMood('🌧️', '', '', [Color(0xFFF2F4F6), Color(0xFFDDE2E8)]);
   }
 
   // 등급 배지 + 전체 조합 중 위치
@@ -429,54 +651,6 @@ class _GameResultScreenState extends State<GameResultScreen> {
           ),
         ],
       ),
-    );
-  }
-
-  // =============================================
-  // 사후 분석 섹션 (12주차 최종안)
-  //  ① 받은 카드 안에서 내 순위  (공정 비교: 라운드마다 실제로 받은 3장 기준)
-  //  ② 라운드별로 돌아보기      (내 선택 · AI 예측 · 이 라운드 더 좋았던 카드)
-  //  ③ 참고: 전체 1위 전략      (11장 전체 기준, 게임 중엔 못 골랐을 수도 있음)
-  // =============================================
-  Widget _buildAnalysisSection() {
-    if (_analysisLoading) return _buildAnalysisLoading();
-
-    // 실패·데이터 없음 → 섹션 자체를 표시하지 않음 (명세서 4장)
-    final a = _analysis;
-    if (a == null) return const SizedBox.shrink();
-    final o = a.offered; // 예전 세션 등으로 없으면 null → 전체 기준으로 대체
-
-    final sections = <Widget>[
-      if (_coach != null || _coachLoading) _buildCoachCard(),
-      o != null ? _buildOfferedRankCard(a, o) : _buildRankCard(a),
-      if (a.cardReport.isNotEmpty) _buildCardReportCard(a.cardReport),
-      if (a.decisionReview != null && a.decisionReview!.rounds.isNotEmpty)
-        _buildDecisionReviewCard(a.decisionReview!),
-      _buildRoundReviewCard(o),
-      if (a.epilogue != null && a.epilogue!.points.isNotEmpty)
-        _buildEpilogueCard(a.epilogue!),
-      if (a.best != null) _buildReferenceCard(a, a.best!),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (int i = 0; i < sections.length; i++) ...[
-          FadeInUp(
-            delay: Duration(milliseconds: 80 * i),
-            child: sections[i],
-          ),
-          const SizedBox(height: 8),
-        ],
-        const Padding(
-          padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
-          child: Text(
-            '게임이 끝난 뒤 100라운드 시장 데이터를 모두 써서 계산한 결과예요. '
-            '게임 중에는 알 수 없는 정보예요.',
-            style: TossText.small,
-          ),
-        ),
-      ],
     );
   }
 
@@ -656,8 +830,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
           ),
           for (int i = 0; i < _selectRounds.length; i++) ...[
             if (i > 0) Container(height: 1, color: TossColors.grey100),
-            _buildRoundBlock(_selectRounds[i], mine.cardAt(_selectRounds[i]),
-                o?.roundAt(_selectRounds[i])),
+            Reveal(
+              order: 2 + i,
+              child: _buildRoundBlock(_selectRounds[i],
+                  mine.cardAt(_selectRounds[i]), o?.roundAt(_selectRounds[i])),
+            ),
           ],
           if (o != null) ...[
             const SizedBox(height: 4),
@@ -802,8 +979,10 @@ class _GameResultScreenState extends State<GameResultScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _sectionTitle('AI 코치 한마디'),
-          for (final line in coach.lines)
-            Padding(
+          for (final (i, line) in coach.lines.indexed)
+            Reveal(
+              order: 2 + i,
+              child: Padding(
               padding: const EdgeInsets.symmetric(vertical: 6),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -840,6 +1019,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
                 ],
               ),
             ),
+            ),
           const SizedBox(height: 8),
           Text(
             coach.byAi
@@ -864,7 +1044,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
           _sectionTitle('카드별 성적표'),
           for (int i = 0; i < report.length; i++) ...[
             if (i > 0) Container(height: 1, color: TossColors.grey100),
-            _buildCardReportRow(report[i]),
+            Reveal(order: 2 + i, child: _buildCardReportRow(report[i])),
           ],
           const SizedBox(height: 6),
           const Text(
@@ -968,9 +1148,9 @@ class _GameResultScreenState extends State<GameResultScreen> {
               style: TossText.sub.copyWith(
                   fontSize: 15, color: TossColors.grey700)),
           const SizedBox(height: 6),
-          for (final r in review.rounds) ...[
+          for (int i = 0; i < review.rounds.length; i++) ...[
             Container(height: 1, color: TossColors.grey100),
-            _buildDecisionBlock(r),
+            Reveal(order: 2 + i, child: _buildDecisionBlock(review.rounds[i])),
           ],
           const Text(
             '다른 선택은 그대로 두고, 그 속보에서의 대응만 바꿨을 때 결과예요.',
@@ -1108,20 +1288,77 @@ class _GameResultScreenState extends State<GameResultScreen> {
   //  게임이 끝난 뒤 시장이 어떻게 됐는지, 내 자산을 그대로 뒀다면 어땠는지를 함께 보여준다.
   // =============================================
   Widget _buildEpilogueCard(Epilogue ep) {
-    Widget row(String label, double value, {bool bold = false}) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 3),
+    // (장면 개편) 시간이 흐르는 이야기처럼: 게임 마지막 날 → 6개월 뒤 → 1년 뒤
+    //   '게임 1위 조합을 그대로 뒀다면'은 게임 중 고를 수 없던 조합이라 뺐다
+    Widget stat(String label, double value, {bool mine = false}) {
+      return Expanded(
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: mine ? TossColors.blue50 : TossColors.white,
+            borderRadius: BorderRadius.circular(TossRadius.md),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TossText.small.copyWith(
+                      color: mine ? TossColors.blue600 : TossColors.grey500)),
+              const SizedBox(height: 2),
+              Text(formatSigned(value),
+                  style: TossText.number.copyWith(
+                      fontSize: 20, color: TossColors.rate(value))),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget step(String emoji, String title, String date, Widget child,
+        {bool lastStep = false}) {
+      return IntrinsicHeight(
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: Text(label,
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
-                      color: bold ? TossColors.grey900 : TossColors.grey700)),
+            // 타임라인 점과 선
+            SizedBox(
+              width: 40,
+              child: Column(
+                children: [
+                  EmojiTile(emoji: emoji, size: 40),
+                  if (!lastStep)
+                    Expanded(
+                      child: Container(
+                        width: 2,
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        color: TossColors.grey200,
+                      ),
+                    ),
+                ],
+              ),
             ),
-            Text(formatSigned(value),
-                style: TossText.number.copyWith(color: TossColors.rate(value))),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: lastStep ? 0 : 18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(title, style: TossText.body2),
+                        const SizedBox(width: 6),
+                        Text(date, style: TossText.small),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    child,
+                  ],
+                ),
+              ),
+            ),
           ],
         ),
       );
@@ -1132,81 +1369,52 @@ class _GameResultScreenState extends State<GameResultScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          const Text('⏳', style: TextStyle(fontSize: 44)),
+          const SizedBox(height: 10),
           _sectionTitle('그 후 이야기'),
-          Text(
-              '게임 마지막 날(${ep.endDate}) 내 수익률은 ${formatSigned(_finalReturnRate)}였어요. '
-              '그 뒤 실제 시장은 이렇게 움직였어요.',
+          Text('게임이 끝난 뒤, 실제 시장은 어떻게 됐을까요?',
               style: TossText.sub.copyWith(
                   fontSize: 15, color: TossColors.grey700)),
-          for (final pt in ep.points) ...[
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                Text(pt.label, style: TossText.body2),
-                const SizedBox(width: 6),
-                Text(pt.date, style: TossText.small),
-              ],
+          const SizedBox(height: 18),
+          step(
+            '🏁',
+            '게임 마지막 날',
+            ep.endDate,
+            Row(children: [
+              stat('내 수익률', _finalReturnRate, mine: true),
+            ]),
+          ),
+          for (int i = 0; i < ep.points.length; i++)
+            FadeInUp(
+              delay: Duration(milliseconds: 200 + 200 * i),
+              child: step(
+                i == ep.points.length - 1 ? '📅' : '🗓️',
+                ep.points[i].label,
+                ep.points[i].date,
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: TossColors.grey50,
+                    borderRadius: BorderRadius.circular(TossRadius.lg),
+                  ),
+                  child: Row(
+                    children: [
+                      stat('S&P500 (마지막 날 대비)', ep.points[i].spxChangeRate),
+                      const SizedBox(width: 6),
+                      stat('내 자산 그대로 (원금 대비)',
+                          ep.points[i].playerReturnRate,
+                          mine: true),
+                    ],
+                  ),
+                ),
+                lastStep: i == ep.points.length - 1,
+              ),
             ),
-            const SizedBox(height: 4),
-            row('S&P500 (게임 마지막 날 대비)', pt.spxChangeRate),
-            row('내 자산을 그대로 뒀다면 (원금 대비)', pt.playerReturnRate,
-                bold: true),
-            if (pt.bestReturnRate != null)
-              row('게임 1위 조합을 그대로 뒀다면 (원금 대비)', pt.bestReturnRate!),
-          ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 18),
           const InfoBox(
             child: Text(
               '게임이 끝났을 때 가진 자산을 더 사고팔지 않고 그대로 들고 있었다고 가정했어요. '
               '게임 중에는 알 수 없던 뒷이야기예요.',
-              style: TossText.caption,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ③ 참고: 이 시장에서 가장 잘 통한 전략 (전체 카드 기준 1위)
-  Widget _buildReferenceCard(ResultAnalysis a, ComboResult best) {
-    return TossSection(
-      padding: const EdgeInsets.fromLTRB(24, 22, 24, 22),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionTitle(
-            '참고: 이 시장에서 가장 잘 통한 전략',
-            trailing: Text(formatRate(best.finalReturnRate),
-                style: TossText.number
-                    .copyWith(color: TossColors.rate(best.finalReturnRate))),
-          ),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: best.cards.map((card) {
-              return Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-                decoration: BoxDecoration(
-                  color: TossColors.grey50,
-                  borderRadius: BorderRadius.circular(TossRadius.sm),
-                ),
-                child: Text(
-                  '${card.round}R ${_cardEmoji(card.cardId)} ${_cardName(card)}',
-                  style: const TextStyle(
-                      fontSize: 13, color: TossColors.grey700),
-                ),
-              );
-            }).toList(),
-          ),
-          const SizedBox(height: 12),
-          InfoBox(
-            child: Text(
-              '${a.cardPoolSize}장 전체 기준이에요. 라운드마다 3장씩만 나오기 때문에, '
-              '이 조합은 게임 중에 고를 수 없었을 수도 있어요.'
-              // (#125) 1라운드의 매도 카드는 팔 주식이 없어 아무 일도 하지 않는다 → 무슨 뜻인지 풀어서 설명
-              '${best.cardAt(1)?.cardId == 8 ? '\n\n1라운드의 역발상 투자는 팔 주식이 없어 아무 일도 하지 않아요. '
-                  '즉, 처음에는 사지 않고 현금을 지킨 조합이 가장 좋았다는 뜻이에요.' : ''}',
               style: TossText.caption,
             ),
           ),

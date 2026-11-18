@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/market.dart';
 import '../models/round_data.dart';
 import '../theme/toss_theme.dart';
+import 'scene/scene_widgets.dart';
 import 'toss/toss_widgets.dart';
 
 // =============================================
@@ -28,41 +29,64 @@ class TodayMarketCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final spx = today.getPrice('^SPX');
+    final mood = spx == null ? null : MarketMood.day(spx.changeRate);
     final others = <(String, double)>[
       for (final t in kMarketTickers)
         if (t != '^SPX')
           if (today.getPrice(t) case final p?) (t, p.changeRate),
     ];
 
-    return TossSection(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+    // (장면 개편) 글 대신 그날의 '시장 날씨' 그림 + 종목 칩
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+      decoration: BoxDecoration(
+        color: TossColors.grey50,
+        borderRadius: BorderRadius.circular(TossRadius.lg),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Expanded(
-                child: Text('오늘 ${koreanDate(today.date)} 시장',
-                    style: TossText.body2),
-              ),
-              if (spx != null) ...[
-                const Text('S&P500 ',
-                    style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                        color: TossColors.grey600)),
-                Text(formatSigned(spx.changeRate),
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w700,
-                        color: TossColors.rate(spx.changeRate),
-                        fontFeatures: const [FontFeature.tabularFigures()])),
+              if (mood != null) ...[
+                MoodHero(mood: mood, size: 56),
+                const SizedBox(width: 14),
               ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('오늘 ${koreanDate(today.date)} 시장',
+                        style: TossText.small),
+                    const SizedBox(height: 2),
+                    if (spx != null)
+                      Row(
+                        children: [
+                          const Text('S&P500 ',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w600,
+                                  color: TossColors.grey800)),
+                          Text(formatSigned(spx.changeRate),
+                              style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w700,
+                                  color: TossColors.rate(spx.changeRate),
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures()
+                                  ])),
+                        ],
+                      ),
+                    if (mood != null)
+                      Text('${mood.label} · ${mood.line}',
+                          style: TossText.caption),
+                  ],
+                ),
+              ),
             ],
           ),
           if (others.isNotEmpty) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -80,14 +104,16 @@ class TodayMarketCard extends StatelessWidget {
 
   Widget _chip(String ticker, double rate) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
       decoration: BoxDecoration(
-        color: TossColors.grey50,
+        color: TossColors.white,
         borderRadius: BorderRadius.circular(TossRadius.sm + 2),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
+          Text(assetEmoji(ticker), style: const TextStyle(fontSize: 13)),
+          const SizedBox(width: 4),
           Text(kTickerNames[ticker] ?? ticker,
               style: const TextStyle(
                   fontSize: 13,

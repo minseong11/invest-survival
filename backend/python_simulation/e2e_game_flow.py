@@ -12,6 +12,9 @@ Spring Boot(8080)와 FastAPI(8000)가 켜진 상태에서, 시나리오마다 �
   5) 사후 분석: 내 결과가 실제 게임 결과와 같고, 등급·최대 낙폭·카드별 성적표·위기 대응 돌아보기가 온다
   6) AI 코치 한마디가 온다 (LLM이 실패해도 규칙 기반 문장)
   7) AI 예측: 25·50라운드는 응답(모델 파일이 없으면 503), 그 외 라운드는 400
+  8) (12주차 피드백 1번) 25·50라운드 즉시 매수 카드 대조: 고르기 전 현금 × 적용 비율 = 실제 매수 금액,
+     매수 시점 = 고른 라운드 종가, 설명(FastAPI CARD_FACTS·서버 DB·앱 카드 설명)의 비율·시점이 같은지.
+     25·50라운드에 즉시 매수 카드가 나오면 그 카드를 고르고, 한 번도 확인하지 못했으면 판을 더 진행한다
 
 compare_java_python.py가 검증용 엔드포인트(/game/validate)를 비교한다면,
 이 스크립트는 앱이 실제로 쓰는 엔드포인트(/game/start, /game/round/action, /game/round/decision, ...)를 지나간다.
@@ -27,9 +30,12 @@ import os
 import random
 import sys
 
+import re
+
 import requests
 
 from game_logic import run_game, load_price_data, CARD_SELECT_ROUNDS, DECISION_CHOICES
+from verify_feedback import CARD_FACTS
 
 JAVA = os.environ.get('JAVA_URL', 'http://localhost:8080')
 GRADES = {'S', 'A', 'B', 'C', 'D'}
@@ -38,6 +44,66 @@ TICKERS = ['^SPX', '^NDX', 'XAUUSD', 'USO', 'AAPL', 'TLT']     # 서버 GameServ
 PY_TICKER = {'XAUUSD': 'GLD'}                                   # Python game_logic은 금을 GLD로 부른다
 
 failures = []
+immediate_buys = []     # 즉시 매수 대조 기록 (8번)
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# 즉시 매수 카드: 카드 ID → (종목, 비율). 서버 data.sql·game_logic.CARDS와 같은 값이어야 한다 (아래에서 대조)
+BUY_ONCE = {1: ('^SPX', 0.30), 7: ('USO', 0.20)}
+CARD_TICKER = {1: '^SPX', 2: 'XAUUSD', 3: '^SPX', 4: 'XAUUSD', 5: '^NDX', 6: '^NDX',
+               7: 'USO', 8: '^SPX', 9: 'AAPL', 10: 'TLT', 11: '^NDX'}
+
+
+def _description_in(path, card_id, pattern):
+    """data.sql / card_info.dart에서 그 카드의 설명 문장을 찾는다"""
+    try:
+        text = open(path, encoding='utf-8').read()
+    except OSError:
+        return None
+    m = re.search(pattern.format(id=card_id), text, re.S)
+    return m.group(1) if m else None
+
+
+def check_immediate_buy(title, rnd, card, before, after, price_data):
+    """고르기 전 현금 × 비율 = 고른 라운드 종가로 산 금액, 그리고 세 곳의 설명이 같은 비율·시점을 말하는지"""
+    ticker, ratio = BUY_ONCE[card]
+    name = CARD_FACTS[card].name
+    others = [c for c in after['triggeredCards'] if c != card and CARD_TICKER.get(c) == ticker]
+    if others:      # 같은 날 같은 종목을 사고판 다른 카드가 있으면 이 카드 몫만 떼어 볼 수 없다
+        print(f'    [즉시 매수 대조 건너뜀] {rnd}R {name}: 같은 날 {ticker} 카드 {others}도 발동')
+        return
+
+    def shares(r):
+        return next((h['shares'] for h in r['holdings'] if h['ticker'] == ticker), 0.0)
+
+    close = price_data['close'][PY_TICKER.get(ticker, ticker)][rnd - 1]
+    cash_before = before['cash']
+    expected = cash_before * ratio
+    bought = (shares(after) - shares(before)) * close
+    ok_amount = check(abs(bought - expected) <= max(2.0, expected * 0.0005),
+                      f'{title} {rnd}R {name}: 고르기 전 현금 {cash_before:,.0f}원 × {ratio:.0%} = {expected:,.0f}원인데 '
+                      f'실제 매수 {bought:,.0f}원')
+    ok_when = check(before['round'] == rnd - 1 and after['round'] == rnd
+                    and after['date'] == str(price_data['dates'][rnd - 1])[:10],
+                    f'{title} {rnd}R {name}: 매수 시점이 고른 라운드({rnd}R) 종가가 아님 ({after["date"]})')
+
+    # 설명 세 곳 — 비율과 "고른 라운드에 즉시"가 실제 계산과 같은지
+    fact = CARD_FACTS[card]
+    pct = f'{round(ratio * 100)}%'
+    sql = _description_in(os.path.join(HERE, '..', 'src', 'main', 'resources', 'data.sql'), card,
+                          r"\(\s*{id},\s*'[^']*',\s*'[^']*',\s*[0-9.]+,\s*'([^']*)'")
+    app = _description_in(os.path.join(HERE, '..', '..', 'frontEnd', 'lib', 'models', 'card_info.dart'), card,
+                          r"id:\s*{id},.*?description:\s*'([^']*)'")
+    ok_text = check(fact.buy_ratio_pct == round(ratio * 100) and '고른 라운드에 즉시' in fact.condition_desc,
+                    f'{name}: AI 설명(CARD_FACTS) {fact.condition_desc} / {fact.buy_ratio_pct}%')
+    for where, desc in (('서버 DB', sql), ('앱', app)):
+        if desc is not None:
+            ok_text &= check(f'현금의 {pct}' in desc and '고르는 즉시' in desc, f'{name}: {where} 설명 "{desc}"')
+
+    line = (f'{title} {rnd}R({after["date"]}) {name}: 고르기 전 현금 {cash_before:,.0f}원 × {pct} = {expected:,.0f}원 '
+            f'→ 그날 종가 {close:,.2f}에 {bought:,.0f}원 매수 / 설명 "{fact.condition_desc}"')
+    print(f'    [즉시 매수 대조] {line}')
+    if ok_amount and ok_when and ok_text:
+        immediate_buys.append(line)
 
 
 def check(cond, message):
@@ -136,7 +202,10 @@ def play_one(scenario, rng):
                 else:
                     check(r.status_code == 503, f'{event_round}R AI 예측 {r.status_code} {r.text[:100]}')
 
-            card = rng.choice(options)
+            # (8) 25·50라운드에 즉시 매수 카드가 나오면 그 카드를 골라 대조한다
+            buy_once = [c for c in options if c in BUY_ONCE] if event_round in (25, 50) else []
+            card = rng.choice(buy_once) if buy_once else rng.choice(options)
+            before = all_rounds[-1] if all_rounds else None
             res = post('/game/round/action', {'sessionId': sid, 'round': event_round, 'cardId': card})
             if not check(res.status_code == 200, f'{event_round}R 카드 선택 실패 {res.status_code} {res.text[:150]}'):
                 return
@@ -157,6 +226,8 @@ def play_one(scenario, rng):
 
         data = res.json()['data']
         check_rounds(data['rounds'], event_round, end, price_data)
+        if event_round in CARD_SELECT_ROUNDS and card in BUY_ONCE and event_round in (25, 50) and before:
+            check_immediate_buy(title, event_round, card, before, data['rounds'][0], price_data)
         # (#125) 다음 이벤트 라운드의 그날 시장 — 고르기 전에 보여 주는 날 (AI 예측도 그날 종가까지 본다)
         market, nxt = data.get('nextEventMarket'), data['nextEventRound']
         if nxt is None:
@@ -251,13 +322,22 @@ def main():
         for _ in range(args.games):
             play_one(scenario, rng)
 
+    # (8) 25·50라운드 즉시 매수 대조를 한 번도 못 했으면 (후보에 안 나옴) 판을 더 진행
+    extra = 0
+    while not immediate_buys and extra < 12:
+        play_one(scenarios[extra % len(scenarios)], rng)
+        extra += 1
+    check(immediate_buys, '25·50라운드 즉시 매수 카드 대조를 한 번도 하지 못함')
+
     print('=' * 60)
     if failures:
         print(f'실패 {len(failures)}건')
         for f in failures[:20]:
             print(f'  - {f}')
         sys.exit(1)
-    print(f'통과: 시나리오 {len(scenarios)}개 × {args.games}판')
+    print(f'통과: 시나리오 {len(scenarios)}개 × {args.games}판, 즉시 매수 대조 {len(immediate_buys)}건')
+    for line in immediate_buys:
+        print(f'  - {line}')
 
 
 if __name__ == '__main__':
