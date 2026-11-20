@@ -344,7 +344,14 @@ class _StockChartState extends State<StockChart> {
                     interval: (widget.rounds.length / 4).ceilToDouble(),
                     getTitlesWidget: (value, _) {
                       final idx = value.toInt();
-                      if (idx < 0 || idx >= widget.rounds.length) {
+                      final last = widget.rounds.length - 1;
+                      if (idx < 0 || idx > last) {
+                        return const SizedBox.shrink();
+                      }
+                      // 마지막 날짜는 항상 보이므로, 그 바로 앞의 눈금 날짜는 뺀다
+                      //  (기존: "03/06"과 마지막 "03/09"가 붙어 "03/0603/09"처럼 겹쳐 보였다)
+                      final step = (widget.rounds.length / 4).ceilToDouble();
+                      if (idx != last && last - idx < step * 0.6) {
                         return const SizedBox.shrink();
                       }
                       final parts = widget.rounds[idx].date.split('-');

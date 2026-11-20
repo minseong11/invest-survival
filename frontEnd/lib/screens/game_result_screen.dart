@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/game_session.dart';
@@ -49,9 +50,27 @@ class _GameResultScreenState extends State<GameResultScreen> {
   static const List<int> _selectRounds = [1, 25, 50, 75];
 
   // (장면 개편) 결과를 한 장씩 넘겨 본다. '한 번에 보기'를 누르면 기존처럼 한 페이지로
-  final PageController _pager = PageController();
+  PageController _pager = PageController();
   int _page = 0;
   bool _listMode = false;
+
+  // '한 번에 보기' ↔ '한 장씩 보기'
+  //  한 번에 보기 동안에는 넘겨 보기 화면이 사라졌다가 돌아올 때 새로 만들어진다.
+  //  기존에는 그때 첫 장부터 시작해서, 보던 장(예: 5 / 8)과 위 표시·아래 버튼이 어긋났다
+  //  (마지막 장에서 돌아오면 첫 장 화면에 '처음으로 돌아가기'만 남았다) → 보던 장에서 다시 시작
+  void _toggleListMode() {
+    setState(() {
+      if (_listMode) {
+        final last = _panels().length - 1;
+        _page = _page.clamp(0, last < 0 ? 0 : last);
+        final old = _pager;
+        _pager = PageController(initialPage: _page);
+        // 예전 컨트롤러는 화면이 다시 그려진 뒤에 정리 (아직 붙어 있을 수 있는 화면에서 먼저 떨어지게)
+        WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+      }
+      _listMode = !_listMode;
+    });
+  }
 
   double get _finalAsset {
     for (int i = widget.session.rounds.length - 1; i >= 0; i--) {
@@ -281,7 +300,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
                   ),
                   const Spacer(),
                   Pressable(
-                    onTap: () => setState(() => _listMode = !_listMode),
+                    onTap: _toggleListMode,
                     haptic: false,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
@@ -313,6 +332,15 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     )
                   : PageView(
                       controller: _pager,
+                      // 컴퓨터에서도 마우스로 끌어서 넘길 수 있게 (기본은 손가락·트랙패드만)
+                      scrollBehavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.trackpad,
+                          PointerDeviceKind.stylus,
+                        },
+                      ),
                       onPageChanged: (i) {
                         HapticFeedback.selectionClick();
                         setState(() => _page = i);
@@ -1290,7 +1318,10 @@ class _GameResultScreenState extends State<GameResultScreen> {
   Widget _buildEpilogueCard(Epilogue ep) {
     // (장면 개편) 시간이 흐르는 이야기처럼: 게임 마지막 날 → 6개월 뒤 → 1년 뒤
     //   '게임 1위 조합을 그대로 뒀다면'은 게임 중 고를 수 없던 조합이라 뺐다
-    Widget stat(String label, double value, {bool mine = false}) {
+    // 칸 이름과 기준을 두 줄로 — 한 줄("S&P500 (마지막 날 대비)")이면 휴대폰 폭에서
+    //   "S&P500 (마지막 날 …"처럼 잘려 무엇과 비교한 %인지가 보이지 않았다
+    Widget stat(String label, String basis, double value, {bool mine = false}) {
+      final labelColor = mine ? TossColors.blue600 : TossColors.grey600;
       return Expanded(
         child: Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -1305,7 +1336,13 @@ class _GameResultScreenState extends State<GameResultScreen> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TossText.small.copyWith(
-                      color: mine ? TossColors.blue600 : TossColors.grey500)),
+                      fontWeight: FontWeight.w600, color: labelColor)),
+              Text(basis,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TossText.small.copyWith(
+                      fontSize: 11,
+                      color: mine ? TossColors.blue500 : TossColors.grey500)),
               const SizedBox(height: 2),
               Text(formatSigned(value),
                   style: TossText.number.copyWith(
@@ -1381,7 +1418,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
             '게임 마지막 날',
             ep.endDate,
             Row(children: [
-              stat('내 수익률', _finalReturnRate, mine: true),
+              stat('내 수익률', '원금 대비', _finalReturnRate, mine: true),
             ]),
           ),
           for (int i = 0; i < ep.points.length; i++)
@@ -1399,9 +1436,9 @@ class _GameResultScreenState extends State<GameResultScreen> {
                   ),
                   child: Row(
                     children: [
-                      stat('S&P500 (마지막 날 대비)', ep.points[i].spxChangeRate),
+                      stat('S&P500', '마지막 날 대비', ep.points[i].spxChangeRate),
                       const SizedBox(width: 6),
-                      stat('내 자산 그대로 (원금 대비)',
+                      stat('내 자산 그대로', '원금 대비',
                           ep.points[i].playerReturnRate,
                           mine: true),
                     ],
