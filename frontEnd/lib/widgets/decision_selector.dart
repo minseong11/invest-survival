@@ -232,15 +232,99 @@ class BreakingNewsCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 14),
-            Text(news.headline,
-                style: const TextStyle(
-                    fontSize: 21,
-                    fontWeight: FontWeight.w800,
-                    height: 1.4,
-                    color: TossColors.white)),
+            FitHeadline(
+              text: news.headline,
+              style: const TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w800,
+                  height: 1.4,
+                  color: TossColors.white),
+            ),
           ],
         ),
       ),
     );
+  }
+}
+
+// =============================================
+// 속보 제목 — 한 글자만 다음 줄로 넘어가지 않게
+//  기존: 21px 고정이라 넓은 화면에서도 "…서킷브레이커 발 / 동"처럼 마지막 글자만 다음 줄로 넘어갔다.
+//  ① 한 줄에 들어가면 한 줄로: 글자 크기를 21px에서 최소 17px까지 1px씩 줄여 본다.
+//  ② 그래도 안 들어가는 긴 제목(좁은 휴대폰)은 글자를 더 줄이지 않고,
+//     쉼표 뒤·괄호 앞을 먼저 고려해 가운데에 가까운 띄어쓰기에서 두 줄로 고르게 나눈다.
+//     ("사우디·러시아 유가 전쟁, / 미 증시 서킷브레이커 발동")
+// =============================================
+class FitHeadline extends StatelessWidget {
+  final String text;
+  final TextStyle style;        // fontSize = 가장 큰 크기
+  final double minFontSize;
+
+  const FitHeadline({
+    super.key,
+    required this.text,
+    required this.style,
+    this.minFontSize = 17,
+  });
+
+  static double _width(String s, TextStyle style, TextScaler scaler) {
+    final tp = TextPainter(
+      text: TextSpan(text: s, style: style),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+      maxLines: 1,
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w;
+  }
+
+  // 두 줄로 나눌 띄어쓰기 고르기: 두 줄 다 폭 안에 들어가는 것 중 길이가 가장 비슷한 곳
+  //  (쉼표 뒤나 괄호 앞이면 조금 더 낫게 친다). 없으면 null
+  static String? balancedTwoLines(
+      String text, TextStyle style, TextScaler scaler, double maxWidth) {
+    String? best;
+    double bestScore = double.infinity;
+    for (int i = 0; i < text.length; i++) {
+      if (text[i] != ' ') continue;
+      final a = text.substring(0, i).trimRight();
+      final b = text.substring(i + 1).trimLeft();
+      if (a.isEmpty || b.isEmpty) continue;
+      final wa = _width(a, style, scaler);
+      final wb = _width(b, style, scaler);
+      if (wa > maxWidth || wb > maxWidth) continue;
+      final natural = a.endsWith(',') || b.startsWith('(');
+      final score = (wa - wb).abs() - (natural ? maxWidth * 0.2 : 0);
+      if (score < bestScore) {
+        bestScore = score;
+        best = '$a\n$b';
+      }
+    }
+    return best;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    return LayoutBuilder(builder: (context, constraints) {
+      final maxWidth = constraints.maxWidth;
+      final base = style.fontSize ?? 21;
+
+      // ① 한 줄
+      for (double size = base; size >= minFontSize; size -= 1) {
+        final s = style.copyWith(fontSize: size);
+        if (_width(text, s, scaler) <= maxWidth - 1) {
+          return Text(text, style: s, maxLines: 1, softWrap: false);
+        }
+      }
+      // ② 두 줄로 고르게 (가능하면 원래 크기로)
+      for (final size in [base, minFontSize]) {
+        final s = style.copyWith(fontSize: size);
+        final split = balancedTwoLines(text, s, scaler, maxWidth);
+        if (split != null) return Text(split, style: s);
+      }
+      // ③ 그래도 안 되면 보통 줄바꿈
+      return Text(text, style: style.copyWith(fontSize: minFontSize));
+    });
   }
 }

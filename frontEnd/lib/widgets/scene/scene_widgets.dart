@@ -132,8 +132,10 @@ class MarketMood {
 
   static const _sunny  = [Color(0xFFFFF6E5), Color(0xFFFFE6BA)];
   static const _partly = [Color(0xFFFFF8EC), Color(0xFFE3EFFF)];
-  static const _cloudy = [Color(0xFFF2F4F6), Color(0xFFDDE2E8)];
-  static const _rain   = [Color(0xFFE8F3FF), Color(0xFFCFE2FA)];
+  // 흐림·비: 흰 구름 그림이 배경에 묻히지 않게 한 톤 진하게
+  //  (기존 흐림 배경은 거의 흰 회색이라 하루 등락이 ±0.5% 미만인 날의 구름이 거의 보이지 않았다)
+  static const _cloudy = [Color(0xFFCBD5E0), Color(0xFFA3B1C2)];
+  static const _rain   = [Color(0xFFD3E4F8), Color(0xFFA9C6EA)];
   static const _storm  = [Color(0xFFE5E8EB), Color(0xFFC3CAD4)];
 
   /// 여러 날에 걸친 등락(%) — 시작 전 20거래일, 게임 시작 후 등
