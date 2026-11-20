@@ -217,16 +217,21 @@ void main() {
     // 칸 이름과 기준을 두 줄로 (한 줄이면 휴대폰 폭에서 "S&P500 (마지막 날 …"처럼 잘렸다)
     expect(find.text('마지막 날 대비'), findsWidgets);
     expect(find.text('원금 대비'), findsWidgets);
-    expect(find.text('처음으로 돌아가기'), findsOneWidget);            // 마지막 장면
+    // 마지막 장면: 처음으로 돌아가는 대신 결과 요약(한 번에 보기)으로 이어진다
+    expect(find.text('결과 한 번에 보기'), findsOneWidget);
+    expect(find.text('처음으로 돌아가기'), findsNothing);
     expect(find.text('다음'), findsNothing);
     expect(find.text('8 / 8'), findsOneWidget);
 
-    // 한 번에 보기: 모든 장면이 한 페이지에. 게임 중 고를 수 없던 '전체 1위 전략'은 없다
-    await _tap(tester, find.text('한 번에 보기'));
+    // 한 번에 보기: 모든 장면이 한 페이지에, 맨 위(결과)부터. 게임 중 고를 수 없던 '전체 1위 전략'은 없다
+    await _tap(tester, find.text('결과 한 번에 보기'));
+    expect(find.widgetWithText(TossButton, '결과 한 번에 보기'), findsNothing);   // 위 제목만 남는다
+    expect(find.text('C등급'), findsOneWidget);
     expect(find.text('카드별 성적표'), findsOneWidget);
     expect(find.text('그 후 이야기'), findsOneWidget);
     expect(find.textContaining('가장 잘 통한 전략'), findsNothing);
     expect(find.text('한 장씩 보기'), findsOneWidget);
+    expect(find.widgetWithText(TossButton, '처음으로 돌아가기'), findsOneWidget);   // 요약에서 처음으로
 
     // 한 장씩 보기로 돌아오면 보던 장(8 / 8)에서 다시 시작한다
     //  (기존: 첫 장이 보이는데 위 표시는 8 / 8, 아래에는 '처음으로 돌아가기'만 남았다)
@@ -234,7 +239,7 @@ void main() {
     expect(find.text('8 / 8'), findsOneWidget);
     expect(find.text('그 후 이야기'), findsOneWidget);
     expect(find.text('C등급'), findsNothing);                         // 첫 장이 아니다
-    expect(find.text('처음으로 돌아가기'), findsOneWidget);
+    expect(find.widgetWithText(TossButton, '결과 한 번에 보기'), findsOneWidget);
 
     // 컴퓨터에서는 마우스로 끌어서 넘긴다 (오른쪽으로 끌면 이전 장)
     await tester.drag(find.byType(PageView), const Offset(320, 0),

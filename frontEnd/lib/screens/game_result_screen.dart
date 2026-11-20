@@ -364,7 +364,9 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     ),
             ),
 
-            // 아래: 페이지 점 + 다음 / 처음으로
+            // 아래: 페이지 점 + 다음 / 결과 한 번에 보기 / 처음으로
+            //  마지막 장까지 넘기면 결과 요약(한 번에 보기)으로 이어진다 — 거기서 처음으로 돌아간다
+            //  (기존: 마지막 장의 버튼이 '처음으로 돌아가기'라, 다 넘긴 뒤 결과를 한눈에 볼 수 없었다)
             Padding(
               padding: EdgeInsets.fromLTRB(16, 8, 16, 12 + bottomInset),
               child: Column(
@@ -380,12 +382,16 @@ class _GameResultScreenState extends State<GameResultScreen> {
                     child: Reveal(
                       order: _listMode ? 0 : 5,
                       child: TossButton(
-                        label: (_listMode || last) ? '처음으로 돌아가기' : '다음',
-                        onTap: (_listMode || last)
+                        label: _listMode
+                            ? '처음으로 돌아가기'
+                            : (last ? '결과 한 번에 보기' : '다음'),
+                        onTap: _listMode
                             ? _goHome
-                            : () => _pager.nextPage(
-                                duration: TossMotion.slow,
-                                curve: TossMotion.enter),
+                            : last
+                                ? _toggleListMode
+                                : () => _pager.nextPage(
+                                    duration: TossMotion.slow,
+                                    curve: TossMotion.enter),
                       ),
                     ),
                   ),
