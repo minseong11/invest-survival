@@ -45,34 +45,58 @@ class DecisionSelector extends StatelessWidget {
         // 순서: 속보(툭) → 내 상황·오늘 시장 → 질문 → 선택지 착착 (장면 안에서만 연출, 없으면 바로 보임)
         if (news != null) ...[
           BreakingNewsCard(news: news),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
         ],
         if (info != null) ...[
           Reveal(order: 2, child: info!),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
         ],
-        const SizedBox(height: 10),
         Reveal(
           order: 3,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('어떻게 대응할까요?', style: TossText.title2),
+              const Text('어떻게 대응할까요?', style: TossText.title3),
               for (final n in otherNews)
                 Padding(
-                  padding: const EdgeInsets.only(top: 6),
+                  padding: const EdgeInsets.only(top: 4),
                   child: Text('· ${n.headline}', style: TossText.caption),
                 ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
-        for (int i = 0; i < DecisionChoice.all.length; i++)
-          Reveal(
-            order: 4 + i,
-            child: _buildChoice(DecisionChoice.all[i]),
+        const SizedBox(height: 8),
+        // (한 화면에) 선택지 3개를 가로 3칸으로 — 세로로 쌓으면 장면이 길어져 스크롤해야 보였다
+        Reveal(
+          order: 4,
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (int i = 0; i < DecisionChoice.all.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(child: _buildChoice(DecisionChoice.all[i])),
+              ],
+            ],
           ),
-        const SizedBox(height: 6),
+        ),
+        const SizedBox(height: 8),
+        // 고른 대응의 설명 (고르기 전에는 안내)
+        Reveal(
+          order: 5,
+          child: AnimatedSwitcher(
+            duration: TossMotion.fast,
+            child: Text(
+              selected == null
+                  ? '버틴다 · 절반 판다 · 더 산다 중 하나를 골라 주세요'
+                  : DecisionChoice.description(selected!, target: buyMoreTarget),
+              key: ValueKey(selected),
+              style: TossText.caption.copyWith(
+                  color: selected == null ? TossColors.grey500 : TossColors.blue600,
+                  fontWeight: selected == null ? FontWeight.w400 : FontWeight.w600),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
         const Reveal(
           order: 6,
           child: Text(
@@ -100,9 +124,7 @@ class DecisionSelector extends StatelessWidget {
       child: AnimatedContainer(
         duration: TossMotion.base,
         curve: TossMotion.enter,
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(6, 10, 6, 10),
         decoration: BoxDecoration(
           color: picked ? TossColors.blue50 : TossColors.grey50,
           borderRadius: BorderRadius.circular(TossRadius.lg),
@@ -113,46 +135,34 @@ class DecisionSelector extends StatelessWidget {
         ),
         child: Opacity(
           opacity: blocked == null ? 1 : 0.45,
-          child: Row(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedScale(
-                scale: picked ? 1.12 : 1,
+                scale: picked ? 1.1 : 1,
                 duration: TossMotion.base,
                 curve: TossMotion.spring,
                 child: EmojiTile(
                   emoji: DecisionChoice.emoji(choice),
-                  size: 52,
+                  size: 40,
                   bg: TossColors.white,
                 ),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(DecisionChoice.label(choice),
-                        style: TossText.body1.copyWith(
-                            color: picked
-                                ? TossColors.blue600
-                                : TossColors.grey900)),
-                    const SizedBox(height: 2),
-                    Text(
-                      blocked ??
-                          DecisionChoice.description(choice,
-                              target: buyMoreTarget),
-                      style: TossText.caption,
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                picked
-                    ? Icons.check_circle_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                size: 24,
-                color: picked ? TossColors.blue500 : TossColors.grey300,
-              ),
+              const SizedBox(height: 6),
+              Text(DecisionChoice.label(choice),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontSize: 14.5,
+                      fontWeight: FontWeight.w700,
+                      color: picked ? TossColors.blue600 : TossColors.grey900)),
+              if (blocked != null) ...[
+                const SizedBox(height: 2),
+                Text(blocked,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 11, height: 1.3, color: TossColors.grey600)),
+              ],
             ],
           ),
         ),
@@ -190,7 +200,7 @@ class BreakingNewsCard extends StatelessWidget {
       ),
       child: Container(
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(TossRadius.xl),
           gradient: LinearGradient(
@@ -231,13 +241,14 @@ class BreakingNewsCard extends StatelessWidget {
                 ),
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
             FitHeadline(
               text: news.headline,
+              minFontSize: 16,
               style: const TextStyle(
-                  fontSize: 21,
+                  fontSize: 19,
                   fontWeight: FontWeight.w800,
-                  height: 1.4,
+                  height: 1.35,
                   color: TossColors.white),
             ),
           ],

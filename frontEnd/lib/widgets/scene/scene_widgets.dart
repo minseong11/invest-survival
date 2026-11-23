@@ -418,11 +418,16 @@ class SceneSheet extends StatelessWidget {
             ),
           if (tag != null || trailing != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 14, 12, 0),
+              padding: const EdgeInsets.fromLTRB(20, 10, 12, 0),
               child: Row(
                 children: [
-                  if (tag != null) tag!,
-                  const Spacer(),
+                  // 태그 자리에 제목까지 넣을 수 있게 남는 폭을 모두 준다 (좁으면 다음 줄로)
+                  if (tag != null)
+                    Expanded(
+                      child: Align(alignment: Alignment.centerLeft, child: tag!),
+                    )
+                  else
+                    const Spacer(),
                   if (trailing != null) trailing!,
                 ],
               ),
@@ -431,7 +436,7 @@ class SceneSheet extends StatelessWidget {
             child: scrollBody
                 ? SingleChildScrollView(
                     controller: controller,
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+                    padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
                     child: body,
                   )
                 : body,

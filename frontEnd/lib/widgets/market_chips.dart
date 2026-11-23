@@ -25,12 +25,18 @@ class MarketChips extends StatelessWidget {
   final List<RoundData> rounds;
   final Set<String> selected;          // 차트에 겹쳐 그리는 종목
   final ValueChanged<String> onToggle;
+  // 카드 선택·위기 대응 장면: 한 화면에 들어가도록 3칸 × 2줄 작은 타일로,
+  //  타일마다 게임 시작 후 등락과 그날(오늘) 등락을 함께 보여준다
+  final bool compact;
+  final Map<String, double> todayChanges;   // 종목 → 그날 등락(%)
 
   const MarketChips({
     super.key,
     required this.rounds,
     required this.selected,
     required this.onToggle,
+    this.compact = false,
+    this.todayChanges = const {},
   });
 
   @override
@@ -41,6 +47,8 @@ class MarketChips extends StatelessWidget {
     ];
     // S&P500만 있으면(예전 서버 응답) 차트와 같은 정보라 생략
     if (items.length < 2) return const SizedBox.shrink();
+
+    if (compact) return _buildCompact(items);
 
     return Padding(
       padding: const EdgeInsets.only(top: 10),
@@ -103,6 +111,128 @@ class MarketChips extends StatelessWidget {
         onTap: () => onToggle(ticker),
         scale: 0.96,
         child: chip,
+      ),
+    );
+  }
+
+  // ── 장면용: 3칸 × 2줄 타일 ─────────────────
+  //  (기존 칩은 2~3줄에 오늘 시장 칸이 따로 있어 장면이 한 화면에 들어가지 않았다.
+  //   옆으로 넘기는 한 줄은 넓은 화면에서도 3~4개만 보이고 마우스로 넘기기 어려워 타일로 모두 보이게)
+  Widget _buildCompact(List<(String, double)> items) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            todayChanges.isEmpty
+                ? '종목별 흐름 · 게임 시작 후  (누르면 차트에 겹쳐 보여요)'
+                : '종목별 흐름 · 게임 시작 후 / 오늘  (누르면 차트에 겹쳐 보여요)',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TossText.small.copyWith(fontSize: 11),
+          ),
+          const SizedBox(height: 4),
+          LayoutBuilder(builder: (context, constraints) {
+            const gap = 6.0;
+            final width = (constraints.maxWidth - gap * 2) / 3;
+            return Wrap(
+              spacing: gap,
+              runSpacing: 5,
+              children: [
+                for (final (t, rate) in items)
+                  SizedBox(width: width, child: _tile(t, rate, todayChanges[t])),
+              ],
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _tile(String ticker, double rate, double? today) {
+    final isBase = ticker == '^SPX';
+    final on = !isBase && selected.contains(ticker);
+    final color = kTickerColors[ticker] ?? TossColors.grey500;
+
+    final tile = AnimatedContainer(
+      duration: TossMotion.fast,
+      padding: const EdgeInsets.fromLTRB(8, 4, 6, 4),
+      decoration: BoxDecoration(
+        color: on ? color.withValues(alpha: 0.10) : TossColors.white,
+        borderRadius: BorderRadius.circular(TossRadius.sm + 2),
+        border: Border.all(
+            color: on ? color : Colors.transparent, width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              _marker(isBase, on, color),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(kTickerNames[ticker] ?? ticker,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 11.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w500,
+                        color: TossColors.grey700)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 1),
+          // 좁은 화면에서는 글자를 살짝 줄여 한 줄에
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(formatSigned(rate),
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w700,
+                        color: TossColors.rate(rate),
+                        fontFeatures: const [FontFeature.tabularFigures()])),
+                if (today != null) ...[
+                  const SizedBox(width: 5),
+                  Text.rich(
+                    TextSpan(children: [
+                      const TextSpan(
+                          text: '오늘 ',
+                          style: TextStyle(color: TossColors.grey500)),
+                      TextSpan(
+                          text: formatSigned(today),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: TossColors.rate(today))),
+                    ]),
+                    style: const TextStyle(
+                        fontSize: 10.5,
+                        height: 1.2,
+                        fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isBase) return tile;
+    return Semantics(
+      button: true,
+      selected: on,
+      child: Pressable(
+        onTap: () => onToggle(ticker),
+        scale: 0.96,
+        child: tile,
       ),
     );
   }

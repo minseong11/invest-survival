@@ -105,7 +105,7 @@ void main() {
     await _tap(tester, find.text('첫 전략 고르기'));
 
     // ── 1라운드: 카드 선택 장면 ──
-    expect(find.text('첫 번째 전략을\n골라주세요'), findsOneWidget);
+    expect(find.text('첫 번째 전략을 골라주세요'), findsOneWidget);    // 제목은 장면 위쪽 태그 줄에
     expect(find.text('오늘 9월 2일 시장'), findsOneWidget);           // 1라운드도 그날 종가로 매매
     expect(find.text('전략을 골라주세요'), findsOneWidget);            // 아래 고정 버튼
     // 팔 주식이 없을 때 매도 카드에는 안내가 붙는다
@@ -114,7 +114,7 @@ void main() {
     await _tap(tester, find.text('황금 적립'));
     await _tap(tester, find.text('이 전략으로 할게요'));
     expect(fake.calls, contains('card:1:2'));
-    expect(find.text('첫 번째 전략을\n골라주세요'), findsNothing);      // 고르면 장면이 내려감
+    expect(find.text('첫 번째 전략을 골라주세요'), findsNothing);      // 고르면 장면이 내려감
     expect(find.text('시작 전 시장 지도'), findsNothing);
 
     // ── 10라운드: 속보 장면 (나쁜 소식) ──
@@ -125,7 +125,7 @@ void main() {
             of: find.byType(DecisionSelector),
             matching: find.text('테스트 속보 10라운드')),
         findsOneWidget);
-    expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
+    expect(find.textContaining('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
     expect(find.textContaining('🚨 10라운드 · 9월 11일'), findsOneWidget); // 전체 화면 장면 위쪽에 라운드·날짜
     // 장면 안에도 진행 화면과 같은 그래프·종목 칩. 내 자산은 어제 종가, S&P500은 오늘 종가까지
     expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(StockChart)),
@@ -134,7 +134,13 @@ void main() {
         findsOneWidget);
     expect(find.text('9월 10일 종가'), findsOneWidget);
     expect(find.text('9월 11일까지'), findsOneWidget);
+    // 대응 세 가지는 한 줄에 나란히, 설명은 고른 것 하나만 아래에
+    final holdY = tester.getCenter(find.text('버틴다')).dy;
+    expect(tester.getCenter(find.text('절반 판다')).dy, moreOrLessEquals(holdY, epsilon: 1));
+    expect(tester.getCenter(find.text('더 산다')).dy, moreOrLessEquals(holdY, epsilon: 1));
+    expect(find.textContaining('중 하나를 골라 주세요'), findsOneWidget);
     await _tap(tester, find.text('절반 판다'));
+    expect(find.text('가진 자산을 종목마다 절반씩 팔아 현금으로 바꿔요'), findsOneWidget);
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
     expect(find.textContaining('절반을 팔았어요'), findsOneWidget);    // 차트 위 알림
@@ -146,12 +152,20 @@ void main() {
 
     // ── 25라운드: AI 예측·설명 ──
     await _playUntil(tester, find.text('AI 예측'));
-    expect(find.text('두 번째 전략을\n골라주세요'), findsOneWidget);
-    expect(find.text('오늘 9월 26일 시장'), findsOneWidget);
-    expect(find.textContaining('AI 예측도 오늘 종가까지'), findsOneWidget);
+    expect(find.text('두 번째 전략을 골라주세요'), findsOneWidget);
+    expect(find.textContaining('오늘 9월 26일 시장'), findsOneWidget);
+    // 평소 순위는 따로 칸 없이 카드 옆 배지로 (후보 1·3·4 → 평소 순서 1 › 4 › 3)
+    expect(find.text('🥇 평소 1위'), findsOneWidget);
+    expect(find.text('🥈 평소 2위'), findsOneWidget);
+    expect(find.text('🥉 평소 3위'), findsOneWidget);
+    expect(find.textContaining('고른 카드는 오늘 종가부터 작동해요'), findsOneWidget);  // 오늘 시장 줄 안
+    expect(find.textContaining('AI 예측은 오늘 종가까지 본 참고용'), findsOneWidget);
     await _tap(tester, find.text('AI 예측'));
     expect(fake.calls, contains('ai:25'));
     expect(find.text('AI 1위'), findsOneWidget);
+    // AI 1위(카드 3)는 평소 3위 카드 — 같은 카드 줄에 두 배지가 나란히 보인다
+    expect(tester.getCenter(find.text('AI 1위')).dy,
+        moreOrLessEquals(tester.getCenter(find.text('🥉 평소 3위')).dy, epsilon: 1));
     // 예측값은 기대수익률이 아니라 카드 평균(아직 고르지 않은 카드 전체)과의 차이로 표기
     expect(find.text('AI 예측: 카드 평균보다 +1.4%p'), findsOneWidget);
     expect(find.text('AI 예측: 카드 평균보다 -1.2%p'), findsOneWidget);
@@ -181,7 +195,8 @@ void main() {
 
     // ── 75라운드: 마지막 카드 → 100라운드 ──
     await _playUntil(tester, find.text('전략을 골라주세요'));
-    expect(find.text('마지막 전략을\n골라주세요'), findsOneWidget);
+    expect(find.text('마지막 전략을 골라주세요'), findsOneWidget);
+    expect(find.textContaining('평소 1위'), findsNothing);             // 평소 순위는 25·50라운드만
     await _tap(tester, find.text('기술의 파도'));
     await _tap(tester, find.text('이 전략으로 할게요'));
     await _playUntil(tester, find.text('결과 보기'));
@@ -304,9 +319,8 @@ void main() {
     expect(find.bySemanticsLabel('게임 나가기'), findsOneWidget);
     expect(find.byTooltip('게임 나가기'), findsOneWidget);
     semantics.dispose();
-    expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
-    expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
-    expect(find.text('+4.8%'), findsWidgets);                          // 금 피난처 (1→25라운드, 그날까지)
+    expect(find.textContaining('금 · 게임 시작 후 +4.8%'), findsOneWidget);  // 금 피난처 (1→25라운드, 그날까지)
+    expect(find.textContaining('S&P500 · 게임 시작 후 '), findsNWidgets(2)); // 거인의 어깨, 공포탐욕
 
     await tester.pump(const Duration(seconds: 6));
   });
@@ -411,7 +425,8 @@ void main() {
 
     // 25라운드: 평소 순위는 AI 없이도 보이고, AI 예측 실패는 안내 + 다시 시도
     await _playUntil(tester, find.text('AI 예측'));
-    expect(find.text('📊 평소 순위'), findsOneWidget);
+    expect(find.text('🥇 평소 1위'), findsOneWidget);
+    expect(find.textContaining('평소 순위: 지금 시장은 보지 않는'), findsOneWidget);
     expect(find.textContaining('처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요'), findsOneWidget);
     await _tap(tester, find.text('AI 예측'));
     expect(find.text('예측을 받지 못했어요'), findsOneWidget);

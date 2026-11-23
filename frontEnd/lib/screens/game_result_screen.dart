@@ -104,23 +104,8 @@ class _GameResultScreenState extends State<GameResultScreen> {
   }
 
   // 한 줄 결론: 시장(S&P500)과 비교
-  String get _headline {
-    final mine = _finalReturnRate;
-    final spx  = _spxReturn;
-    if (spx == null) {
-      return mine >= 0 ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요';
-    }
-    // (#125) 표시하면 0.0%p인 차이 — "시장보다 0.0%p 덜 잃었어요" 대신
-    if ((mine - spx).abs() < kMinVisibleGap) return '시장과 거의\n같은 결과예요';
-    final gap = (mine - spx).abs().toStringAsFixed(1);
-    if (mine >= spx) {
-      if (mine >= 0 && spx < 0) return '시장은 떨어졌지만\n수익을 냈어요';
-      return mine >= 0 ? '시장보다 $gap%p\n더 벌었어요' : '시장보다 $gap%p\n덜 잃었어요';
-    }
-    // (#125) 시장은 올랐는데 나는 손실 — "시장보다 n%p 더 잃었어요"는 시장도 잃은 것처럼 읽힌다
-    if (mine < 0 && spx >= 0) return '시장은 올랐지만\n손실을 봤어요';
-    return mine >= 0 ? '시장보다 $gap%p\n덜 벌었어요' : '시장보다 $gap%p\n더 잃었어요';
-  }
+  String get _headline =>
+      resultHeadline(_finalReturnRate, _spxReturn, grade: _analysis?.grade);
 
   bool get _beatMarket {
     final spx = _spxReturn;
@@ -470,8 +455,13 @@ class _GameResultScreenState extends State<GameResultScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
+              // 사후 분석(등급)이 오면 결론 문구가 바뀔 수 있어 부드럽게 바꾼다
               Flexible(
-                child: Text(_headline, style: TossText.title1),
+                child: AnimatedSwitcher(
+                  duration: TossMotion.base,
+                  child: Text(_headline,
+                      key: ValueKey(_headline), style: TossText.title1),
+                ),
               ),
               const SizedBox(width: 6),
               if (profit)
@@ -1592,4 +1582,39 @@ class _BarChart extends StatelessWidget {
       ],
     );
   }
+}
+
+// =============================================
+// 결과 첫 장의 한 줄 결론 — 내 수익률(mine)과 같은 기간 S&P500(spx), 등급을 함께 본다
+//  (테스트에서 경우마다 확인할 수 있게 화면 밖 함수로)
+// =============================================
+String resultHeadline(double mine, double? spx, {String? grade}) {
+  if (spx == null) {
+    return mine >= 0 ? '위기에서 살아남았어요' : '이번엔 손실을 봤어요';
+  }
+  // (#125) 표시하면 0.0%p인 차이 — "시장보다 0.0%p 덜 잃었어요" 대신
+  if ((mine - spx).abs() < kMinVisibleGap) return '시장과 거의\n같은 결과예요';
+  final gap = (mine - spx).abs().toStringAsFixed(1);
+  // 등급은 시장이 아니라 '가능한 카드 조합 전체'와 비교한 위치다.
+  //  시장과 비교한 결론과 등급이 엇갈리면 둘을 함께 말한다
+  //  (기존: "시장은 떨어졌지만 수익을 냈어요" 바로 아래에 "C등급 · 하위 26.6%"가 나와 "수익인데 왜 C?"처럼 읽혔다)
+  final lowGrade  = grade == 'C' || grade == 'D';
+  final highGrade = grade == 'S' || grade == 'A';
+  if (mine >= spx) {
+    if (lowGrade) {
+      return mine >= 0
+          ? '수익은 냈지만\n더 좋은 조합이 많았어요'
+          : '시장보다 덜 잃었지만\n더 좋은 조합이 많았어요';
+    }
+    if (mine >= 0 && spx < 0) return '시장은 떨어졌지만\n수익을 냈어요';
+    return mine >= 0 ? '시장보다 $gap%p\n더 벌었어요' : '시장보다 $gap%p\n덜 잃었어요';
+  }
+  if (highGrade) {
+    return mine >= 0
+        ? '시장보다는 덜 벌었지만\n좋은 카드 조합이었어요'
+        : '시장보다는 더 잃었지만\n좋은 카드 조합이었어요';
+  }
+  // (#125) 시장은 올랐는데 나는 손실 — "시장보다 n%p 더 잃었어요"는 시장도 잃은 것처럼 읽힌다
+  if (mine < 0 && spx >= 0) return '시장은 올랐지만\n손실을 봤어요';
+  return mine >= 0 ? '시장보다 $gap%p\n덜 벌었어요' : '시장보다 $gap%p\n더 잃었어요';
 }
