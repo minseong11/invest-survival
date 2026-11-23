@@ -1252,7 +1252,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 내 자산 쪽을 넓게 (반반이면 휴대폰 폭에서 "현금 / 52%"처럼 끊겼다)
               Expanded(
+                flex: 3,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -1267,25 +1269,30 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text.rich(
-                      TextSpan(children: [
-                        TextSpan(
-                            text: formatShortWon(asset),
+                    // 금액 옆에 수익률·현금 비중. 자리가 모자라면 수익률·현금이 통째로 다음 줄로
+                    Wrap(
+                      spacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.end,
+                      children: [
+                        Text(formatShortWon(asset),
                             style: const TextStyle(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w700,
-                                color: TossColors.grey900)),
-                        TextSpan(
-                            text: cash == null
-                                ? '  ${formatSigned(rate)}'
-                                : '  ${formatSigned(rate)} · 현금 ${cash.toStringAsFixed(0)}%',
-                            style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600,
-                                color: TossColors.rate(rate))),
-                      ]),
-                      style: const TextStyle(
-                          fontFeatures: [FontFeature.tabularFigures()]),
+                                color: TossColors.grey900,
+                                fontFeatures: [FontFeature.tabularFigures()])),
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 1),
+                          child: Text(
+                              cash == null
+                                  ? formatSigned(rate)
+                                  : '${formatSigned(rate)} · 현금 ${cash.toStringAsFixed(0)}%',
+                              style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                  color: TossColors.rate(rate),
+                                  fontFeatures: const [FontFeature.tabularFigures()])),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -1293,6 +1300,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               if (spxMove != null) ...[
                 const SizedBox(width: 10),
                 Flexible(
+                  flex: 2,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
