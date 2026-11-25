@@ -38,6 +38,8 @@ class _GameResultScreenState extends State<GameResultScreen> {
   // 숫자 공개 연출: 처음엔 시작 자산·0%를 보여주고, 잠시 뒤 최종 값으로 굴러감
   bool _revealed = false;
   Timer? _revealTimer;
+  bool _curtain = true;          // 처음 1.2초 "100라운드 종료" 막
+  Timer? _curtainTimer;
 
   // 사후 분석 (백테스팅, API v6.1)
   ResultAnalysis? _analysis;
@@ -116,8 +118,11 @@ class _GameResultScreenState extends State<GameResultScreen> {
   void initState() {
     super.initState();
 
-    // 화면 진입 후 0.5초 뒤 숫자 공개
-    _revealTimer = Timer(const Duration(milliseconds: 500), () {
+    // (게임 장면 개편) 먼저 "100라운드 종료" 막이 1.2초 → 걷히면서 숫자 공개
+    _curtainTimer = Timer(const Duration(milliseconds: 1200), () {
+      if (mounted) setState(() => _curtain = false);
+    });
+    _revealTimer = Timer(const Duration(milliseconds: 1400), () {
       if (!mounted) return;
       HapticFeedback.mediumImpact();
       setState(() => _revealed = true);
@@ -195,6 +200,7 @@ class _GameResultScreenState extends State<GameResultScreen> {
   @override
   void dispose() {
     _revealTimer?.cancel();
+    _curtainTimer?.cancel();
     _pager.dispose();
     super.dispose();
   }
@@ -263,6 +269,59 @@ class _GameResultScreenState extends State<GameResultScreen> {
     final page = _page.clamp(0, panels.length - 1);
     final last = page >= panels.length - 1;
 
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        _buildPages(bottomInset, panels, page, last),
+        // 게임이 끝나는 순간: 어두운 막에 "100라운드 종료" → 걷히며 결과 (누르는 것을 막지 않는다)
+        Positioned.fill(
+          child: IgnorePointer(
+            child: AnimatedOpacity(
+              opacity: _curtain ? 1 : 0,
+              duration: const Duration(milliseconds: 450),
+              curve: Curves.easeInCubic,
+              child: _buildCurtain(),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCurtain() {
+    return Material(
+      color: const Color(0xFF17171C),
+      child: Center(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: const Duration(milliseconds: 600),
+          curve: Curves.easeOutBack,
+          builder: (_, t, child) => Opacity(
+            opacity: t.clamp(0.0, 1.0),
+            child: Transform.scale(scale: 0.8 + 0.2 * t, child: child),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('🏁', style: TextStyle(fontSize: 64)),
+              const SizedBox(height: 16),
+              Text('${widget.session.totalRounds}라운드 종료',
+                  style: const TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      color: TossColors.white)),
+              const SizedBox(height: 6),
+              Text('${widget.session.scenarioTitle}, 끝까지 지나왔어요',
+                  style: const TextStyle(fontSize: 15, color: TossColors.grey400)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPages(
+      double bottomInset, List<Widget> panels, int page, bool last) {
     return Scaffold(
       // 한 장씩: 흰 바탕 위에 패널 하나 / 한 번에: 회색 바탕 위에 흰 패널을 쌓음
       backgroundColor: _listMode ? TossColors.background : TossColors.white,
@@ -538,19 +597,26 @@ class _GameResultScreenState extends State<GameResultScreen> {
     };
     return Row(
       children: [
-        Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(14),
+        // (게임 장면 개편) 등급은 도장처럼 크게 '쾅'
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 1.8, end: 1),
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.easeOutBack,
+          builder: (_, s, child) => Transform.scale(scale: s, child: child),
+          child: Container(
+            width: 60,
+            height: 60,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Text(a.grade,
+                style: TextStyle(
+                    fontSize: 32, fontWeight: FontWeight.w900, color: fg)),
           ),
-          child: Text(a.grade,
-              style: TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.w800, color: fg)),
         ),
-        const SizedBox(width: 12),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,

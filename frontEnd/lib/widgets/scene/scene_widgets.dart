@@ -382,6 +382,8 @@ class SceneSheet extends StatelessWidget {
   final bool fullScreen;      // 시작 브리핑: 화면 전체
   final bool scrollBody;      // false면 body가 스스로 스크롤을 가진다 (넘겨 보는 장면)
   final ScrollController? controller;
+  final Color color;          // 배경 (위기 대응 장면은 어둡게)
+  final Widget? header;       // 태그 줄 위, 화면 폭 가득 (위기 대응의 속보 띠)
 
   const SceneSheet({
     super.key,
@@ -392,19 +394,22 @@ class SceneSheet extends StatelessWidget {
     this.fullScreen = false,
     this.scrollBody = true,
     this.controller,
+    this.color = TossColors.white,
+    this.header,
   });
 
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
     return Material(
-      color: TossColors.white,
+      color: color,
       borderRadius: fullScreen
           ? BorderRadius.zero
           : const BorderRadius.vertical(top: Radius.circular(TossRadius.sheet)),
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
+          if (header != null) header!,
           if (!fullScreen)
             Padding(
               padding: const EdgeInsets.only(top: 10),
@@ -444,5 +449,71 @@ class SceneSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── 흐르는 글자 띠 (위기 대응 장면의 속보 띠) ─────
+//  글이 폭보다 길면 오른쪽에서 왼쪽으로 끊김 없이 흐른다. 짧으면 그대로 둔다
+class Marquee extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  final double gap;
+  const Marquee({super.key, required this.text, required this.style, this.gap = 48});
+
+  @override
+  State<Marquee> createState() => _MarqueeState();
+}
+
+class _MarqueeState extends State<Marquee> with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      // 글이 길수록 천천히 (한 바퀴 6~30초)
+      duration: Duration(milliseconds: (widget.text.length * 260).clamp(6000, 30000)),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(builder: (context, box) {
+      final tp = TextPainter(
+        text: TextSpan(text: widget.text, style: widget.style),
+        textDirection: TextDirection.ltr,
+        textScaler: MediaQuery.textScalerOf(context),
+        maxLines: 1,
+      )..layout();
+      final w = tp.width;
+      tp.dispose();
+      final line = Text(widget.text, style: widget.style, maxLines: 1, softWrap: false);
+      if (w <= box.maxWidth) return Align(alignment: Alignment.centerLeft, child: line);
+      final span = w + widget.gap;
+      return ClipRect(
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (_, child) => Transform.translate(
+            offset: Offset(-span * _c.value, 0),
+            child: child,
+          ),
+          child: OverflowBox(
+            alignment: Alignment.centerLeft,
+            maxWidth: double.infinity,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [line, SizedBox(width: widget.gap), line],
+            ),
+          ),
+        ),
+      );
+    });
   }
 }

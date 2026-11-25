@@ -4,6 +4,7 @@ import '../models/card_info.dart';
 import '../models/holding.dart';
 import '../models/round_data.dart';
 import '../theme/toss_theme.dart';
+import 'market_chips.dart' show kTickerColors;
 import 'toss/toss_widgets.dart';
 
 // 고른 라운드에 한 번 사는 카드 (거인의 어깨, 원유 베팅) — 발동 횟수 대신 "즉시 매수"로 표시
@@ -141,15 +142,9 @@ class HoldingCardsWidget extends StatelessWidget {
                     fontSize: 15,
                     fontWeight: FontWeight.w700,
                     color: TossColors.grey900)),
-            const SizedBox(height: 10),
-            ...holdings.map((h) => _AssetRow(
-                  name:       h.name,
-                  returnRate: h.returnRate,
-                  weight:     h.weight,
-                )),
-            if (cashWeight != null)
-              _AssetRow(name: '현금', returnRate: null, weight: cashWeight!),
             const SizedBox(height: 12),
+            _AssetBar(holdings: holdings, cashWeight: cashWeight),
+            const SizedBox(height: 14),
           ],
           Text('내 카드 ${cards.length}장',
               style: const TextStyle(
@@ -199,80 +194,86 @@ class HoldingCardsWidget extends StatelessWidget {
 }
 
 // =============================================
-// 보유 자산 한 줄: 이름 | 비중 막대 | 비중% | 수익률
+// (게임 장면 개편) 보유 자산: 비중을 색으로 나눈 막대 하나 + 아래 한 줄 범례 (이름 비중 수익률)
+//  기존: 종목마다 막대 한 줄씩이라 종목이 늘수록 길어져 진행 화면을 스크롤해야 했다
 // =============================================
-class _AssetRow extends StatelessWidget {
-  final String name;
-  final double? returnRate; // 현금은 null
-  final double weight;
-
-  const _AssetRow({
-    required this.name,
-    required this.returnRate,
-    required this.weight,
-  });
+class _AssetBar extends StatelessWidget {
+  final List<Holding> holdings;
+  final double? cashWeight;
+  const _AssetBar({required this.holdings, this.cashWeight});
 
   @override
   Widget build(BuildContext context) {
-    final r = returnRate;
-    final w = weight.clamp(0, 100).toDouble();
-    final barColor = r == null ? TossColors.grey300 : TossColors.blue500;
+    final parts = <(String, double, double?, Color)>[
+      for (final h in holdings)
+        (h.name, h.weight, h.returnRate,
+            kTickerColors[h.ticker] ?? TossColors.blue500),
+      if (cashWeight != null) ('현금', cashWeight!, null, TossColors.grey300),
+    ];
+    final total = parts.fold<double>(0, (a, p) => a + p.$2.clamp(0, 100));
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 64,
-            child: Text(name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w500,
-                    color: TossColors.grey800)),
-          ),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: Container(
-                height: 8,
-                color: TossColors.grey100,
-                alignment: Alignment.centerLeft,
-                child: TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: w / 100),
-                  duration: TossMotion.slow,
-                  curve: TossMotion.enter,
-                  builder: (_, v, __) => FractionallySizedBox(
-                    widthFactor: v.clamp(0.0, 1.0),
-                    heightFactor: 1,
-                    child: Container(color: barColor),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 12,
+            child: total <= 0
+                ? Container(color: TossColors.grey100)
+                : Row(
+                    children: [
+                      for (int i = 0; i < parts.length; i++) ...[
+                        if (i > 0) const SizedBox(width: 2),
+                        Expanded(
+                          flex: (parts[i].$2.clamp(0, 100) * 10).round().clamp(1, 1000),
+                          child: AnimatedContainer(
+                            duration: TossMotion.slow,
+                            color: parts[i].$4,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 12,
+          runSpacing: 6,
+          children: [
+            for (final p in parts)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration:
+                        BoxDecoration(color: p.$4, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 5),
+                  Text('${p.$1} ${p.$2.toStringAsFixed(0)}%',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: TossColors.grey700)),
+                  if (p.$3 != null) ...[
+                    const SizedBox(width: 4),
+                    Text(
+                      '${p.$3! >= 0 ? '+' : ''}${p.$3!.toStringAsFixed(1)}%',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                          color: TossColors.rate(p.$3!)),
+                    ),
+                  ],
+                ],
               ),
-            ),
-          ),
-          SizedBox(
-            width: 40,
-            child: Text('${w.toStringAsFixed(0)}%',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 12, color: TossColors.grey500)),
-          ),
-          SizedBox(
-            width: 60,
-            child: Text(
-              r == null ? '' : '${r >= 0 ? '+' : ''}${r.toStringAsFixed(1)}%',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                  color: r == null ? TossColors.grey500 : TossColors.rate(r)),
-            ),
-          ),
-        ],
-      ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -359,11 +360,10 @@ class _HoldingCardSlotState extends State<_HoldingCardSlot>
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             decoration: BoxDecoration(
-              color: Color.lerp(
-                  TossColors.grey50, const Color(0xFFFFF4E0), g),
+              color: Color.lerp(TossColors.grey50, TossColors.blue50, g),
               borderRadius: BorderRadius.circular(TossRadius.md),
               border: Border.all(
-                color: TossColors.orange500.withValues(alpha: g),
+                color: TossColors.blue500.withValues(alpha: g),
                 width: 1.5,
               ),
             ),

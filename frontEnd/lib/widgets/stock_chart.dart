@@ -46,6 +46,9 @@ class StockChart extends StatefulWidget {
   final Set<int> decisionIndexes;
   // (#125) S&P500 말고 겹쳐 그릴 종목 (차트 아래 종목 칩에서 고름). 색은 kTickerColors
   final Set<String> extraTickers;
+  // (게임 장면 개편) 진행 화면용 간단한 차트: 범례·뉴스 점·카드/위기 대응 표시 없이 내 자산과 S&P500 두 선만
+  //   (범례 5개와 점이 많아 한눈에 읽기 어려웠다. 자세한 차트는 '종목별 흐름 보기' 시트에서 본다)
+  final bool compact;
 
   const StockChart({
     super.key,
@@ -54,6 +57,7 @@ class StockChart extends StatefulWidget {
     this.cardIndexes = const {},
     this.decisionIndexes = const {},
     this.extraTickers = const {},
+    this.compact = false,
   });
 
   @override
@@ -144,6 +148,7 @@ class _StockChartState extends State<StockChart> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         // 범례 (항목이 많아 좁은 화면에서는 두 줄로 넘어감)
+        if (!widget.compact)
         Padding(
           padding: const EdgeInsets.only(bottom: 6),
           child: Wrap(
@@ -232,7 +237,8 @@ class _StockChartState extends State<StockChart> {
                       getDotPainter: (spot, _, __, idx) {
                         final last = idx == spxSpots.length - 1;
                         // 뉴스가 나온 날: 시장 선 위에 색 점
-                        final newsColor = _newsColor(spot.x.toInt());
+                        final newsColor =
+                            widget.compact ? null : _newsColor(spot.x.toInt());
                         if (newsColor != null) {
                           return FlDotCirclePainter(
                             radius: 3,
@@ -265,6 +271,7 @@ class _StockChartState extends State<StockChart> {
                         final last = idx == assetSpots.length - 1;
                         // (#125) 위기 대응을 한 날: 주황 네모
                         if (!last &&
+                            !widget.compact &&
                             widget.decisionIndexes.contains(spot.x.toInt())) {
                           return FlDotSquarePainter(
                             size: 7,
@@ -275,6 +282,7 @@ class _StockChartState extends State<StockChart> {
                         }
                         // 카드를 고른 날: 흰 점 + 선 색 테두리
                         if (!last &&
+                            !widget.compact &&
                             widget.cardIndexes.contains(spot.x.toInt())) {
                           return FlDotCirclePainter(
                             radius: 3.5,
