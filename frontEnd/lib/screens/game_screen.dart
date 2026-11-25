@@ -1313,6 +1313,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ],
             ],
           ),
+          // 내 자산이 무엇으로 얼마씩 있는지 — 사는 카드·파는 카드, 절반 판다·더 산다를 고를 때 판단 근거
+          //  (기존: 전체 금액과 현금 비중만 있어, 종목별 금액은 진행 화면 '내 포트폴리오'에서 비중으로만 볼 수 있었다)
+          const SizedBox(height: 10),
+          _buildSceneHoldings(asset),
           const SizedBox(height: 10),
           SizedBox(
             height: 170,
@@ -1331,6 +1335,79 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           ),
         ],
       ),
+    );
+  }
+
+  // 장면 그래프 칸 안 '내 자산 구성': 종목마다 금액·비중, 마지막에 현금
+  //  금액은 서버가 보낸 평가금액(value)과 현금(cash). 그래프 위 '내 자산'과 같은 날(전날 종가) 기준
+  Widget _buildSceneHoldings(double asset) {
+    final holdings = [..._currentRound.holdings]
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final cashWeight = _currentRound.cashWeight;
+    final cash = _currentRound.cash ??
+        (cashWeight == null ? null : asset * cashWeight / 100);
+    if (holdings.isEmpty && cash == null) return const SizedBox.shrink();
+
+    Widget dot(Color color) => Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        );
+
+    Widget pill(Color color, String name, double value, double? weight) =>
+        Container(
+          padding: const EdgeInsets.fromLTRB(8, 5, 10, 5),
+          decoration: BoxDecoration(
+            color: TossColors.white,
+            borderRadius: BorderRadius.circular(TossRadius.sm + 2),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              dot(color),
+              const SizedBox(width: 6),
+              Text(name,
+                  style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                      color: TossColors.grey700)),
+              const SizedBox(width: 6),
+              Text(formatShortWon(value),
+                  style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: TossColors.grey900,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+              if (weight != null) ...[
+                const SizedBox(width: 4),
+                Text('${weight.toStringAsFixed(0)}%',
+                    style: const TextStyle(
+                        fontSize: 11.5, color: TossColors.grey500)),
+              ],
+            ],
+          ),
+        );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('내 자산 구성', style: TossText.small),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            for (final h in holdings)
+              pill(kTickerColors[h.ticker] ?? TossColors.grey500,
+                  tickerName(h.ticker), h.value, h.weight),
+            if (cash != null)
+              pill(TossColors.grey300, '현금', cash, cashWeight),
+            if (holdings.isEmpty)
+              const Text('아직 산 종목은 없어요', style: TossText.small),
+          ],
+        ),
+      ],
     );
   }
 

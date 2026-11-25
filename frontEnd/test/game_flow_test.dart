@@ -134,6 +134,14 @@ void main() {
         findsOneWidget);
     expect(find.text('9월 10일 종가'), findsOneWidget);
     expect(find.text('9월 11일까지'), findsOneWidget);
+    // 내 자산 구성: 종목마다 금액·비중, 마지막에 현금 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
+    Finder inScene(Finder f) => find.descendant(of: find.byType(SceneSheet), matching: f);
+    expect(inScene(find.text('내 자산 구성')), findsOneWidget);
+    expect(inScene(find.text('270만원')), findsOneWidget);
+    expect(inScene(find.text('30%')), findsOneWidget);
+    expect(inScene(find.text('현금')), findsOneWidget);
+    expect(inScene(find.text('700만원')), findsOneWidget);
+    expect(inScene(find.text('70%')), findsOneWidget);
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
