@@ -46,8 +46,6 @@ class StockChart extends StatefulWidget {
   final Set<int> decisionIndexes;
   // (#125) S&P500 말고 겹쳐 그릴 종목 (차트 아래 종목 칩에서 고름). 색은 kTickerColors
   final Set<String> extraTickers;
-  // 장면 안 작은 그래프는 범례 없이 (같은 범례가 진행 화면 그래프 위에 늘 있다)
-  final bool showLegend;
 
   const StockChart({
     super.key,
@@ -56,7 +54,6 @@ class StockChart extends StatefulWidget {
     this.cardIndexes = const {},
     this.decisionIndexes = const {},
     this.extraTickers = const {},
-    this.showLegend = true,
   });
 
   @override
@@ -147,24 +144,23 @@ class _StockChartState extends State<StockChart> {
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         // 범례 (항목이 많아 좁은 화면에서는 두 줄로 넘어감)
-        if (widget.showLegend)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 6),
-            child: Wrap(
-              alignment: WrapAlignment.end,
-              spacing: 12,
-              runSpacing: 4,
-              children: [
-                if (widget.cardIndexes.isNotEmpty)
-                  _legendRing(assetColor, '카드 선택'),
-                if (widget.decisionIndexes.isNotEmpty)
-                  _legendSquare(TossColors.orange500, '위기 대응'),
-                _legendItem(TossColors.orange500, '뉴스'),
-                if (hasAsset) _legendItem(assetColor, '내 자산'),
-                _legendItemDash(TossColors.grey400, 'S&P 500'),
-              ],
-            ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 6),
+          child: Wrap(
+            alignment: WrapAlignment.end,
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              if (widget.cardIndexes.isNotEmpty)
+                _legendRing(assetColor, '카드 선택'),
+              if (widget.decisionIndexes.isNotEmpty)
+                _legendSquare(TossColors.orange500, '위기 대응'),
+              _legendItem(TossColors.orange500, '뉴스'),
+              if (hasAsset) _legendItem(assetColor, '내 자산'),
+              _legendItemDash(TossColors.grey400, 'S&P 500'),
+            ],
           ),
+        ),
 
         Expanded(
           child: LineChart(
