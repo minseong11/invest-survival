@@ -4,8 +4,8 @@ import '../theme/toss_theme.dart';
 import 'toss/toss_widgets.dart';
 
 // =============================================
-// 뉴스 배너 (11주차) — 토스 스타일
-// 게임 화면 위에서 내려오는 진한 알림 카드. 기존 레이아웃을 밀어내지 않는다.
+// 뉴스 표시 (11주차) — 토스 스타일
+// 게임 화면 위쪽의 '최근 뉴스' 칸과 지금까지 나온 뉴스 목록.
 // 이 앱에서 빨강은 '수익' 색이라, 위험 뉴스는 빨강 대신 주황으로 표시한다.
 // =============================================
 
@@ -54,89 +54,138 @@ class _LevelLabel extends StatelessWidget {
   }
 }
 
-class NewsBanner extends StatelessWidget {
-  final NewsItem news;
-  final VoidCallback onClose;
-  final bool sticky; // 카드 선택 라운드: 고를 때까지 유지
+// =============================================
+// 최근 뉴스 칸 — 게임 화면 위쪽(라운드 표시 바로 아래)에 늘 있는 한 줄 칸
+//  기존: 뉴스가 나오면 화면 맨 위(뒤로 가기·제목·라운드)를 5초 동안 덮는 배너가 내려왔다
+//        (×4 배속에서 5초는 40라운드 — 그동안 라운드 표시를 볼 수 없었다)
+//  지금: 칸이 처음부터 자리를 차지해 아무것도 가리지 않고, 다음 뉴스가 올 때까지 남아 있다.
+//        새 뉴스가 오면 칸이 잠깐 그 뉴스 색으로 물들고 '새 소식'이 붙는다.
+//        누르면 지금까지 나온 뉴스 목록 (기존 헤더의 신문 버튼 자리를 옮김)
+// =============================================
+class NewsStrip extends StatelessWidget {
+  final NewsItem? news;        // 가장 최근 뉴스 (없으면 안내 문구)
+  final int count;             // 지금까지 나온 뉴스 수
+  final bool fresh;            // 방금 나온 뉴스 → 칸이 물들고 '새 소식'
+  final VoidCallback? onTap;   // 뉴스 목록 열기
 
-  const NewsBanner({
+  static const double height = 56;
+
+  const NewsStrip({
     super.key,
     required this.news,
-    required this.onClose,
-    this.sticky = false,
+    required this.count,
+    this.fresh = false,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final style = NewsStyle.of(news.level);
-    final sub = [
-      news.date,
-      if (news.source.isNotEmpty) news.source,
-      if (sticky) '카드를 고를 때 참고하세요',
-    ].join(' · ');
+    final n = news;
+    final style = n == null ? null : NewsStyle.of(n.level);
 
-    return Material(
-      color: Colors.transparent,
-      child: Pressable(
-        onTap: onClose,
-        haptic: false,
-        scale: 0.98,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 14, 12, 14),
-          decoration: BoxDecoration(
-            color: TossColors.grey900,
-            borderRadius: BorderRadius.circular(TossRadius.lg + 2),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.18),
-                blurRadius: 20,
-                offset: const Offset(0, 8),
+    final Widget content = n == null
+        ? const Row(
+            children: [
+              Text('📰', style: TextStyle(fontSize: 16)),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text('뉴스가 나오면 여기에 보여요',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                        color: TossColors.grey500)),
               ),
             ],
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          )
+        : Row(
             children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 1),
-                child: _LevelLabel(style.label, style.accent, style.onAccent),
-              ),
+              _LevelLabel(style!.label, style.accent, style.onAccent),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
                   children: [
+                    Text(n.headline,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                            color: TossColors.grey900)),
+                    const SizedBox(height: 1),
                     Text(
-                      news.headline,
+                      [n.date, if (n.source.isNotEmpty) n.source].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: TossColors.white,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      sub,
-                      style: const TextStyle(
-                          fontSize: 12, color: TossColors.grey400),
+                          fontSize: 12, color: TossColors.grey500),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 4),
-              const Icon(Icons.close_rounded,
-                  size: 18, color: TossColors.grey500),
+              const SizedBox(width: 8),
+              AnimatedSwitcher(
+                duration: TossMotion.fast,
+                child: fresh
+                    ? Container(
+                        key: const ValueKey('fresh'),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: style.softFg,
+                          borderRadius: BorderRadius.circular(TossRadius.sm),
+                        ),
+                        child: const Text('새 소식',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
+                                color: TossColors.white)),
+                      )
+                    : Row(
+                        key: const ValueKey('count'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('전체 $count',
+                              style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: TossColors.grey500)),
+                          const Icon(Icons.chevron_right_rounded,
+                              size: 18, color: TossColors.grey400),
+                        ],
+                      ),
+              ),
             ],
+          );
+
+    return Semantics(
+      container: true,
+      button: n != null,
+      label: n == null ? null : '최근 뉴스, 누르면 지금까지 나온 뉴스 $count개',
+      child: Pressable(
+        onTap: n == null ? null : onTap,
+        haptic: false,
+        scale: 0.99,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 450),
+          curve: Curves.easeOut,
+          height: height,
+          padding: const EdgeInsets.fromLTRB(14, 0, 10, 0),
+          decoration: BoxDecoration(
+            color: fresh && style != null ? style.softBg : TossColors.white,
+            borderRadius: BorderRadius.circular(TossRadius.lg),
           ),
+          child: content,
         ),
       ),
     );
   }
 }
 
-// 지금까지 나온 뉴스 목록 (헤더 신문 버튼)
+// 지금까지 나온 뉴스 목록 (최근 뉴스 칸을 누르면)
 void showNewsLogSheet(BuildContext context, List<NewsItem> log) {
   showModalBottomSheet(
     context: context,

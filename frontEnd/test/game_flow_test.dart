@@ -1,3 +1,4 @@
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/models/coach_comment.dart';
 import 'package:flutter_application_1/models/result_analysis.dart';
@@ -7,6 +8,8 @@ import 'package:flutter_application_1/screens/scenario_screen.dart';
 import 'package:flutter_application_1/theme/toss_theme.dart';
 import 'package:flutter_application_1/widgets/decision_selector.dart';
 import 'package:flutter_application_1/widgets/market_chips.dart';
+import 'package:flutter_application_1/widgets/news_banner.dart';
+import 'package:flutter_application_1/widgets/scene/scene_widgets.dart';
 import 'package:flutter_application_1/widgets/stock_chart.dart';
 import 'package:flutter_application_1/widgets/toss/toss_widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -118,14 +121,36 @@ void main() {
     await _playUntil(tester, find.text('대응을 골라주세요'));
     expect(find.text('⚡ 속보'), findsOneWidget);
     expect(find.text('어떻게 대응할까요?'), findsOneWidget);
-    expect(find.text('테스트 속보 10라운드'), findsOneWidget);
+    expect(find.descendant(
+            of: find.byType(DecisionSelector),
+            matching: find.text('테스트 속보 10라운드')),
+        findsOneWidget);
     expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
     expect(find.textContaining('🚨 10라운드 · 9월 11일'), findsOneWidget); // 전체 화면 장면 위쪽에 라운드·날짜
+    // 장면 안에도 진행 화면과 같은 그래프·종목 칩. 내 자산은 어제 종가, S&P500은 오늘 종가까지
+    expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(StockChart)),
+        findsOneWidget);
+    expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
+        findsOneWidget);
+    expect(find.text('9월 10일 종가'), findsOneWidget);
+    expect(find.text('9월 11일까지'), findsOneWidget);
+    // 내 자산 구성: 종목마다 금액·비중, 마지막에 현금 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
+    Finder inScene(Finder f) => find.descendant(of: find.byType(SceneSheet), matching: f);
+    expect(inScene(find.text('내 자산 구성')), findsOneWidget);
+    expect(inScene(find.text('270만원')), findsOneWidget);
+    expect(inScene(find.text('30%')), findsOneWidget);
+    expect(inScene(find.text('현금')), findsOneWidget);
+    expect(inScene(find.text('700만원')), findsOneWidget);
+    expect(inScene(find.text('70%')), findsOneWidget);
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
     expect(find.textContaining('절반을 팔았어요'), findsOneWidget);    // 차트 위 알림
     expect(find.text('어떻게 대응할까요?'), findsNothing);
+    // 장면이 내려간 뒤에도 그 속보는 위쪽 최근 뉴스 칸에 남아 있다
+    expect(find.descendant(
+            of: find.byType(NewsStrip), matching: find.text('테스트 속보 10라운드')),
+        findsOneWidget);
 
     // ── 25라운드: AI 예측·설명 ──
     await _playUntil(tester, find.text('AI 예측'));
@@ -197,15 +222,40 @@ void main() {
     expect(find.text('테스트 코치 문장이에요.'), findsOneWidget);
     await _pageUntil(tester, find.text('그 후 이야기'));
     expect(find.text('+34.2%'), findsOneWidget);                      // 1년 뒤 S&P500
-    expect(find.text('처음으로 돌아가기'), findsOneWidget);            // 마지막 장면
+    // 칸 이름과 기준을 두 줄로 (한 줄이면 휴대폰 폭에서 "S&P500 (마지막 날 …"처럼 잘렸다)
+    expect(find.text('마지막 날 대비'), findsWidgets);
+    expect(find.text('원금 대비'), findsWidgets);
+    // 마지막 장면: 처음으로 돌아가는 대신 결과 요약(한 번에 보기)으로 이어진다
+    expect(find.text('결과 한 번에 보기'), findsOneWidget);
+    expect(find.text('처음으로 돌아가기'), findsNothing);
     expect(find.text('다음'), findsNothing);
+    expect(find.text('8 / 8'), findsOneWidget);
 
-    // 한 번에 보기: 모든 장면이 한 페이지에. 게임 중 고를 수 없던 '전체 1위 전략'은 없다
-    await _tap(tester, find.text('한 번에 보기'));
+    // 한 번에 보기: 모든 장면이 한 페이지에, 맨 위(결과)부터. 게임 중 고를 수 없던 '전체 1위 전략'은 없다
+    await _tap(tester, find.text('결과 한 번에 보기'));
+    expect(find.widgetWithText(TossButton, '결과 한 번에 보기'), findsNothing);   // 위 제목만 남는다
+    expect(find.text('C등급'), findsOneWidget);
     expect(find.text('카드별 성적표'), findsOneWidget);
     expect(find.text('그 후 이야기'), findsOneWidget);
     expect(find.textContaining('가장 잘 통한 전략'), findsNothing);
     expect(find.text('한 장씩 보기'), findsOneWidget);
+    expect(find.widgetWithText(TossButton, '처음으로 돌아가기'), findsOneWidget);   // 요약에서 처음으로
+
+    // 한 장씩 보기로 돌아오면 보던 장(8 / 8)에서 다시 시작한다
+    //  (기존: 첫 장이 보이는데 위 표시는 8 / 8, 아래에는 '처음으로 돌아가기'만 남았다)
+    await _tap(tester, find.text('한 장씩 보기'));
+    expect(find.text('8 / 8'), findsOneWidget);
+    expect(find.text('그 후 이야기'), findsOneWidget);
+    expect(find.text('C등급'), findsNothing);                         // 첫 장이 아니다
+    expect(find.widgetWithText(TossButton, '결과 한 번에 보기'), findsOneWidget);
+
+    // 컴퓨터에서는 마우스로 끌어서 넘긴다 (오른쪽으로 끌면 이전 장)
+    await tester.drag(find.byType(PageView), const Offset(320, 0),
+        kind: PointerDeviceKind.mouse);
+    await _settle(tester);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('7 / 8'), findsOneWidget);
+    expect(find.text('AI 코치 한마디'), findsOneWidget);
 
     // 남은 타이머(뉴스 알림·알림 칸) 정리
     await tester.pump(const Duration(seconds: 6));
@@ -238,13 +288,66 @@ void main() {
     await _tap(tester, chip('금'));
     expect(chart().extraTickers, {'USO'});
 
+    // 진행 화면 그래프는 화면 높이의 약 4분의 1 (412×892 → 약 232px, 기존 190px 고정)
+    expect(tester.getSize(find.byType(StockChart)).height, closeTo(892 * 0.26, 0.5));
+
     // 25라운드 카드 선택 장면: 카드가 사고파는 종목의 게임 시작 후 등락 (금 카드는 GLD → 서버 가격 XAUUSD)
     await _tap(tester, find.text('이어서 진행하기'));
     await _playUntil(tester, find.text('전략을 골라주세요'));
+
+    // 장면 안 그래프·종목 칩도 진행 화면과 같이 쓴다 — 게임 화면에서 켠 원유가 그대로, 장면에서 금을 켜면 겹쳐짐
+    final sceneChart = find.descendant(
+        of: find.byType(SceneSheet), matching: find.byType(StockChart));
+    Finder sceneChip(String name) => find.descendant(
+        of: find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
+        matching: find.text(name));
+    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO'});
+    await _tap(tester, sceneChip('금'));
+    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO', 'XAUUSD'});
+    expect(find.text('9월 25일 종가'), findsOneWidget);                 // 내 자산은 어제 종가
+    expect(find.text('9월 26일까지'), findsOneWidget);                  // S&P500은 오늘 종가까지
+
+    // 장면 오른쪽 위 X는 화면 읽기 기능에서 '게임 나가기'로 읽힌다
+    final semantics = tester.ensureSemantics();
+    expect(find.bySemanticsLabel('게임 나가기'), findsOneWidget);
+    expect(find.byTooltip('게임 나가기'), findsOneWidget);
+    semantics.dispose();
     expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
     expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
     expect(find.text('+4.8%'), findsWidgets);                          // 금 피난처 (1→25라운드, 그날까지)
 
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('뉴스는 위쪽 최근 뉴스 칸에 — 화면을 가리지 않고 다음 뉴스가 올 때까지 남는다', (tester) async {
+    final fake = FakeGameService();
+    await _pumpApp(tester, fake);
+    await _startSkippingBriefing(tester);
+    await _tap(tester, find.text('황금 적립'));
+    await _tap(tester, find.text('이 전략으로 할게요'));
+
+    Finder inStrip(Finder f) => find.descendant(of: find.byType(NewsStrip), matching: f);
+    // 뉴스가 나오기 전에는 안내 문구로 자리를 지킨다 (뉴스가 와도 화면이 출렁이지 않게)
+    expect(inStrip(find.text('뉴스가 나오면 여기에 보여요')), findsOneWidget);
+
+    // 5라운드 뉴스: 칸에 나타나고 잠깐 '새 소식'
+    await _playUntil(tester, inStrip(find.text('테스트 주의 뉴스')));
+    expect(inStrip(find.text('새 소식')), findsOneWidget);
+    // 칸은 라운드 표시 아래에 있다 (기존 배너는 뒤로 가기·제목·라운드를 5초 동안 덮었다)
+    expect(tester.getTopLeft(find.byType(NewsStrip)).dy,
+        greaterThan(tester.getBottomLeft(find.text(' / 100 라운드')).dy));
+
+    await _tap(tester, find.text('잠시 멈추기'));
+    await tester.pump(const Duration(seconds: 3));
+    await _settle(tester);                                          // '새 소식'이 사라지는 연출까지
+    expect(inStrip(find.text('새 소식')), findsNothing);
+    expect(inStrip(find.text('테스트 주의 뉴스')), findsOneWidget);   // 다음 뉴스가 올 때까지 남는다
+    expect(inStrip(find.text('전체 1')), findsOneWidget);
+
+    // 누르면 지금까지 나온 뉴스 목록
+    await _tap(tester, find.byType(NewsStrip));
+    expect(find.text('지금까지 나온 뉴스 1개'), findsOneWidget);
+    await _tap(tester, find.text('닫기'));
     await tester.pump(const Duration(seconds: 6));
   });
 
