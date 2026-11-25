@@ -7,7 +7,6 @@ import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
 import '../models/decision.dart';
-import '../models/fixed_ranking.dart';
 import '../models/market.dart';
 import '../models/news_item.dart';
 import '../models/result_analysis.dart' show kMinVisibleGap;
@@ -192,13 +191,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
 
-  // (12주차 피드백 2번) 평소 순위 = 학습 기간(2006~2018) 이 라운드에서 각 카드가 낸 평균 기여도 순서.
-  //  지금 시장은 보지 않는다. 7주차 평가에서 AI(V2)가 처음 보는 시장에서 이 기준보다 낫다는 근거를 찾지 못해
-  //  AI와 나란히 보여 주고 비교하게 한다 (#129에서 빠졌던 것을 부채꼴 카드·설명 칸·AI 비교 시트에 다시 넣음)
-  List<int> get _usualOrder => FixedRanking.order(_currentRound1, _currentCardOptions);
-  static const _medals = ['🥇', '🥈', '🥉'];
-  static const String _usualMeaning = '지금 시장은 보지 않는 과거 평균 순서';
-
   // 1·75라운드: AI 예측을 제공하지 않는 이유 (v6.1 합의 1번)
   //  - 1라운드: so_far 시장 데이터가 없어 V2가 판단할 근거가 없음
   //  - 75라운드: 남은 라운드가 적어 카드 간 결과 차이가 작음
@@ -329,7 +321,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     double bar(double v) => hi - lo < 1e-9 ? 1 : 0.3 + 0.7 * (v - lo) / (hi - lo);
     final topId = ranked.first.cardId;
     var sel = topId;
-    final usual = _usualOrder;
 
     final chosen = await showModalBottomSheet<int>(
       context: context,
@@ -353,16 +344,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             final title = isTop
                 ? 'AI라면 $name${_josa(name, '을', '를')} 골라요'
                 : '$name${_josa(name, '은', '는')} $rank위예요';
-            // 평소 순위와 비교 한 줄 (25·50라운드)
-            final usualTop = usual.isEmpty ? null : CardInfo.fromId(usual.first);
-            final usualSel = usual.indexOf(sel);
-            final compare = usualTop == null
-                ? null
-                : isTop
-                    ? (usual.first == topId
-                        ? '평소 순위 1위와 같은 카드예요'
-                        : '평소 순위 1위는 ${usualTop.name}${_josa(usualTop.name, '이에요', '예요')}')
-                    : (usualSel >= 0 ? '평소 순위로는 ${usualSel + 1}위예요' : null);
 
             return RevealScope(
               child: SingleChildScrollView(
@@ -386,14 +367,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       child: Text(title,
                           key: ValueKey(title), style: TossText.title2),
                     ),
-                    if (compare != null) ...[
-                      const SizedBox(height: 4),
-                      Text(compare,
-                          style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w600,
-                              color: TossColors.grey600)),
-                    ],
                     const SizedBox(height: 22),
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -407,7 +380,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                               child: _aiMiniCard(
                                 ranked[i],
                                 bar(ranked[i].contribution),
-                                usualRank: usual.indexOf(ranked[i].cardId),
                                 top: i == 0,
                                 selected: ranked[i].cardId == sel,
                                 onTap: () => setSheet(() => sel = ranked[i].cardId),
@@ -439,11 +411,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    Text(
+                    const Text(
                       'AI는 오늘 종가까지의 S&P500 흐름과 고른 카드만 보고 예측해요. '
-                      '과거 시장으로 배운 참고용이라 틀릴 수 있어요.'
-                      '${usual.isEmpty ? '' : ' 평소 순위는 $_usualMeaning예요. '
-                          '처음 보는 시장 테스트에서 AI는 평소 순위보다 낫지 않았어요.'}',
+                      '과거 시장으로 배운 참고용이라 틀릴 수 있어요.',
                       style: TossText.small,
                     ),
                     const SizedBox(height: 20),
@@ -480,10 +450,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   Widget _aiMiniCard(CardRanking r, double barRatio,
-      {required bool top,
-      required bool selected,
-      required VoidCallback onTap,
-      int usualRank = -1}) {
+      {required bool top, required bool selected, required VoidCallback onTap}) {
     final card = CardInfo.fromId(r.cardId);
     final tint = card == null
         ? TossColors.grey500
@@ -544,12 +511,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: top ? TossColors.blue600 : TossColors.grey500)),
-            if (usualRank >= 0 && usualRank < _medals.length)
-              Text('${_medals[usualRank]} 평소 ${usualRank + 1}위',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      fontSize: 11, color: TossColors.grey500)),
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
@@ -1801,7 +1762,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       final overlap = n == 1 ? 0.0 : math.max(0.0, cardW - step) + cardW * 0.08;
       bool coveredBy(int top, int i) =>
           top >= 0 && top < n && depth(top) > depth(i);
-      final usual = _usualOrder;
 
       return Stack(
         clipBehavior: Clip.none,
@@ -1825,7 +1785,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     picked >= 0 && picked != i,
                     insetLeft:  coveredBy(i - 1, i) ? overlap : 0,
                     insetRight: coveredBy(i + 1, i) ? overlap : 0,
-                    usualRank:  usual.indexOf(cards[i].id),
                   ),
                 ),
               ),
@@ -1836,9 +1795,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   // insetLeft / insetRight: 옆 카드에 덮이는 폭 — 그만큼 글자를 안쪽으로 (왼쪽이 덮이면 오른쪽 정렬)
-  //  usualRank: 평소 순위(0부터, 없으면 -1) — 25·50라운드 카드에 🥇 평소 1위처럼
   Widget _buildFanCard(CardInfo card, double w, bool dimmed,
-      {double insetLeft = 0, double insetRight = 0, int usualRank = -1}) {
+      {double insetLeft = 0, double insetRight = 0}) {
     final selected = _pendingCardId == card.id;
     final aiPick   = _aiRecommendedCardId == card.id;
     final tint     = kTickerColors[priceTicker(card.ticker)] ?? TossColors.blue500;
@@ -1935,29 +1893,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                                     Text(tickerName(card.ticker),
                                         maxLines: 1,
                                         style: TossText.small),
-                                    if (usualRank >= 0 && usualRank < _medals.length) ...[
-                                      const SizedBox(height: 4),
-                                      // 좁으면 줄바꿈 대신 살짝 작게 ("평소 2 / 위"처럼 끊기지 않게)
-                                      FittedBox(
-                                        fit: BoxFit.scaleDown,
-                                        child: Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: TossColors.grey100,
-                                            borderRadius: BorderRadius.circular(6),
-                                          ),
-                                          child: Text(
-                                              '${_medals[usualRank]} 평소 ${usualRank + 1}위',
-                                              maxLines: 1,
-                                              softWrap: false,
-                                              style: const TextStyle(
-                                                  fontSize: 11.5,
-                                                  fontWeight: FontWeight.w600,
-                                                  color: TossColors.grey700)),
-                                        ),
-                                      ),
-                                    ],
                                   ],
                                 ),
                               ),
@@ -2076,16 +2011,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           style: const TextStyle(
                               fontSize: 13, color: TossColors.grey700),
                         ),
-                      ],
-                      // 평소 순위와 그 뜻 (25·50라운드)
-                      if (_usualOrder.indexOf(card.id) case final r
-                          when r >= 0 && r < _medals.length) ...[
-                        const SizedBox(height: 4),
-                        Text('${_medals[r]} 평소 ${r + 1}위 · $_usualMeaning',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12.5, color: TossColors.grey600)),
                       ],
                       // (#125) 팔 S&P500이 없으면 이 카드는 발동해도 아무 일도 일어나지 않는다
                       if (card.id == 8 && !_holdsSpx) ...[
