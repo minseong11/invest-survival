@@ -19,7 +19,8 @@ class DecisionSelector extends StatelessWidget {
   final String buyMoreTarget;        // '더 산다'에서 사는 지수 이름
   final bool enabled;
   final ValueChanged<String> onSelect;
-  final Widget? info;                // 속보와 질문 사이에 넣을 내용 (지금 내 상황·오늘 시장)
+  final Widget? info;                // 큰 숫자와 질문 사이에 넣을 내용 (지금 내 상황)
+  final double? dayMove;             // (게임 장면 개편) 그날 S&P500 하루 등락 — 크게 '쾅'
 
   const DecisionSelector({
     super.key,
@@ -32,41 +33,54 @@ class DecisionSelector extends StatelessWidget {
     this.buyMoreTarget = 'S&P500',
     this.enabled = true,
     this.info,
+    this.dayMove,
   });
+
+  // 어두운 배경에서 읽히는 상승·하락 색
+  static Color darkRate(double v) =>
+      v > 0 ? const Color(0xFFFF6B76) : (v < 0 ? const Color(0xFF6EA8FF) : TossColors.grey400);
 
   @override
   Widget build(BuildContext context) {
     final news = prompt?.news;
 
-    // (장면 개편) 속보 카드 → 질문 → 큰 선택지 3개. 게임 화면 위로 올라오는 장면 시트 안에 놓인다
+    // (게임 장면 개편) 어두운 장면: 속보 배지·헤드라인 → 그날 S&P500 등락을 크게 → 내 상황 → 질문 → 선택지 착착
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // 순서: 속보(툭) → 내 상황·오늘 시장 → 질문 → 선택지 착착 (장면 안에서만 연출, 없으면 바로 보임)
         if (news != null) ...[
-          BreakingNewsCard(news: news),
-          const SizedBox(height: 12),
+          _NewsHeadline(news: news),
+          const SizedBox(height: 14),
+        ],
+        if (dayMove != null) ...[
+          Reveal(order: 1, child: _BigMove(change: dayMove!)),
+          const SizedBox(height: 16),
         ],
         if (info != null) ...[
           Reveal(order: 2, child: info!),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
         ],
-        const SizedBox(height: 10),
         Reveal(
           order: 3,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('어떻게 대응할까요?', style: TossText.title2),
+              const Text('어떻게 대응할까요?',
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w800,
+                      color: TossColors.white)),
               for (final n in otherNews)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text('· ${n.headline}', style: TossText.caption),
+                  child: Text('· ${n.headline}',
+                      style: const TextStyle(
+                          fontSize: 13, height: 1.4, color: TossColors.grey400)),
                 ),
             ],
           ),
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: 10),
         for (int i = 0; i < DecisionChoice.all.length; i++)
           // 선택지가 하나씩 올라온다 (간격을 넓혀 하나씩 보이게)
           Reveal(
@@ -79,7 +93,7 @@ class DecisionSelector extends StatelessWidget {
           order: 9,
           child: Text(
             '오늘 종가로 바로 매매하고, 전략 카드는 계속 작동해요.',
-            style: TossText.small,
+            style: TextStyle(fontSize: 12.5, color: TossColors.grey500),
           ),
         ),
       ],
@@ -99,66 +113,174 @@ class DecisionSelector extends StatelessWidget {
     return Pressable(
       onTap: usable ? () => onSelect(choice) : null,
       scale: 0.97,
-      child: AnimatedContainer(
+      child: AnimatedScale(
+        scale: picked ? 1.02 : 1,
         duration: TossMotion.base,
-        curve: TossMotion.enter,
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-        width: double.infinity,
-        decoration: BoxDecoration(
-          color: picked ? TossColors.blue50 : TossColors.grey50,
-          borderRadius: BorderRadius.circular(TossRadius.lg),
-          border: Border.all(
-            color: picked ? TossColors.blue500 : Colors.transparent,
-            width: 2,
+        curve: TossMotion.spring,
+        child: AnimatedContainer(
+          duration: TossMotion.base,
+          curve: TossMotion.enter,
+          margin: const EdgeInsets.symmetric(vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: picked
+                ? TossColors.blue500
+                : TossColors.white.withValues(alpha: blocked == null ? 0.08 : 0.03),
+            borderRadius: BorderRadius.circular(TossRadius.lg),
+            border: Border.all(
+              color: picked
+                  ? TossColors.blue500
+                  : TossColors.white.withValues(alpha: blocked == null ? 0.14 : 0.08),
+              width: 1.5,
+            ),
           ),
-        ),
-        child: Opacity(
-          opacity: blocked == null ? 1 : 0.45,
-          child: Row(
-            children: [
-              AnimatedScale(
-                scale: picked ? 1.12 : 1,
-                duration: TossMotion.base,
-                curve: TossMotion.spring,
-                child: EmojiTile(
+          child: Opacity(
+            opacity: blocked == null ? 1 : 0.45,
+            child: Row(
+              children: [
+                EmojiTile(
                   emoji: DecisionChoice.emoji(choice),
-                  size: 52,
-                  bg: TossColors.white,
+                  size: 44,
+                  bg: TossColors.white.withValues(alpha: picked ? 0.2 : 0.1),
                 ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(DecisionChoice.label(choice),
-                        style: TossText.body1.copyWith(
-                            color: picked
-                                ? TossColors.blue600
-                                : TossColors.grey900)),
-                    const SizedBox(height: 2),
-                    Text(
-                      blocked ??
-                          DecisionChoice.description(choice,
-                              target: buyMoreTarget),
-                      style: TossText.caption,
-                    ),
-                  ],
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(DecisionChoice.label(choice),
+                          style: const TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w800,
+                              color: TossColors.white)),
+                      const SizedBox(height: 2),
+                      Text(
+                        blocked ??
+                            DecisionChoice.description(choice,
+                                target: buyMoreTarget),
+                        style: TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            color: TossColors.white
+                                .withValues(alpha: picked ? 0.9 : 0.65)),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                picked
-                    ? Icons.check_circle_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                size: 24,
-                color: picked ? TossColors.blue500 : TossColors.grey300,
-              ),
-            ],
+                const SizedBox(width: 8),
+                AnimatedOpacity(
+                  opacity: picked ? 1 : 0,
+                  duration: TossMotion.base,
+                  child: const Icon(Icons.check_circle_rounded,
+                      size: 24, color: TossColors.white),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+// 속보 배지 + 헤드라인 (어두운 장면 위에 흰 글씨). 등장할 때 살짝 커지며 나타난다
+class _NewsHeadline extends StatelessWidget {
+  final NewsItem news;
+  const _NewsHeadline({required this.news});
+
+  @override
+  Widget build(BuildContext context) {
+    final (badge, badgeBg, badgeFg) = switch (news.level) {
+      'danger'   => ('⚡ 속보', const Color(0xFFE5333F), TossColors.white),
+      'positive' => ('📣 희소식', TossColors.green500, TossColors.white),
+      _          => ('📰 뉴스', TossColors.grey600, TossColors.white),
+    };
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 500),
+      curve: TossMotion.spring,
+      builder: (_, t, child) => Opacity(
+        opacity: t.clamp(0.0, 1.0),
+        child: Transform.scale(
+            scale: 0.94 + 0.06 * t, alignment: Alignment.centerLeft, child: child),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: badgeBg,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(badge,
+                    style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: badgeFg)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  news.source.isEmpty ? news.date : '${news.date} · ${news.source}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: TossColors.grey400),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          FitHeadline(
+            text: news.headline,
+            style: const TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.w800,
+                height: 1.35,
+                color: TossColors.white),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// 그날 S&P500 하루 등락을 크게 — 크게 시작해 제자리로 '쾅'
+class _BigMove extends StatelessWidget {
+  final double change;
+  const _BigMove({required this.change});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 1.5, end: 1),
+          duration: const Duration(milliseconds: 550),
+          curve: Curves.easeOutBack,
+          builder: (_, s, child) => Transform.scale(
+              scale: s, alignment: Alignment.bottomLeft, child: child),
+          child: Text(formatSigned(change),
+              style: TextStyle(
+                  fontSize: 56,
+                  height: 1.05,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -2,
+                  color: DecisionSelector.darkRate(change),
+                  fontFeatures: const [FontFeature.tabularFigures()])),
+        ),
+        const SizedBox(width: 10),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 6),
+          child: Text('S&P500\n하루 만에',
+              style: TextStyle(
+                  fontSize: 13, height: 1.35, color: TossColors.grey400)),
+        ),
+      ],
     );
   }
 }

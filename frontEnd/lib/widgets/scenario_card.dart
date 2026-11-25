@@ -36,57 +36,93 @@ class ScenarioCard extends StatelessWidget {
         _ => '매우 쉬움',
       };
 
+  // (게임 장면 개편) 목록 한 줄 → '스테이지 카드': 위는 시나리오 색 띠에 연도를 크게, 아래는 제목·설명·난이도
   @override
   Widget build(BuildContext context) {
     return Pressable(
       onTap: onTap,
       scale: 0.98,
       child: Container(
-        color: Colors.transparent,
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        margin: const EdgeInsets.only(bottom: 12),
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: TossColors.white,
+          borderRadius: BorderRadius.circular(TossRadius.xl),
+          border: Border.all(color: TossColors.grey200),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Container(
-              width: 52,
-              height: 52,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: _tileColor,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Text('${scenario.year}',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: _tileTextColor)),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              height: 72,
+              color: _tileColor,
+              padding: const EdgeInsets.symmetric(horizontal: 18),
+              child: Row(
                 children: [
-                  Text(scenario.title, style: TossText.body2.copyWith(fontSize: 17)),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      _DifficultyDots(level: scenario.difficulty),
-                      const SizedBox(width: 6),
-                      Text(_difficultyLabel, style: TossText.caption),
-                    ],
+                  Text('${scenario.year}',
+                      style: TextStyle(
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -1,
+                          color: _tileTextColor)),
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: TossColors.white.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(100),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _DifficultyDots(level: scenario.difficulty),
+                        const SizedBox(width: 4),
+                        Text(_difficultyLabel,
+                            style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: TossColors.grey800)),
+                      ],
+                    ),
                   ),
-                  // (#125) 서버가 주는 한 줄 설명 (게임이 시작되는 시점)
-                  if (scenario.description.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(scenario.description, style: TossText.caption),
-                  ],
                 ],
               ),
             ),
-            const Padding(
-              padding: EdgeInsets.only(top: 14),
-              child: Icon(Icons.chevron_right_rounded,
-                  color: TossColors.grey400, size: 24),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 14, 14, 14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(scenario.title,
+                            style: TossText.body2.copyWith(
+                                fontSize: 18, fontWeight: FontWeight.w800)),
+                        // (#125) 서버가 주는 한 줄 설명 (게임이 시작되는 시점)
+                        if (scenario.description.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(scenario.description, style: TossText.caption),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: TossColors.blue50,
+                      borderRadius: BorderRadius.circular(TossRadius.md),
+                    ),
+                    child: const Text('도전',
+                        style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: TossColors.blue600)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
