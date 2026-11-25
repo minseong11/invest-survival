@@ -282,6 +282,7 @@ void main() {
         markTestSkipped('test/fonts/NotoSansKR.ttf 없음');
         return;
       }
+      await tester.pump();   // 글꼴 등록 알림으로 잡힌 프레임을 여기서 처리
       final fake = FakeGameService();
       await _pumpApp(tester, fake);
       tester.view.physicalSize = size * 3;
