@@ -1341,8 +1341,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         child: Pressable(
           onTap: () => Navigator.maybePop(context),
           haptic: false,
-          child: const Padding(
-            padding: EdgeInsets.all(8),
+          child: Padding(
+            padding: const EdgeInsets.all(8),
             child: Icon(Icons.close_rounded, size: 24, color: color),
           ),
         ),
