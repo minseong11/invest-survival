@@ -43,22 +43,25 @@ class DecisionSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final news = prompt?.news;
+    // 키 작은 화면(360×740 휴대폰, 768px 노트북 등): 제목·큰 숫자·여백·선택지를 조금씩 줄여 한 화면에
+    //  (기존: 360×740에서 54~98px 넘쳐 세 번째 선택지 '더 산다'가 처음에 보이지 않았다)
+    final compact = MediaQuery.sizeOf(context).height < 780;
 
     // (게임 장면 개편) 어두운 장면: 속보 배지·헤드라인 → 그날 S&P500 등락을 크게 → 내 상황 → 질문 → 선택지 착착
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (news != null) ...[
-          _NewsHeadline(news: news),
-          const SizedBox(height: 14),
+          _NewsHeadline(news: news, compact: compact),
+          SizedBox(height: compact ? 6 : 14),
         ],
         if (dayMove != null) ...[
-          Reveal(order: 1, child: _BigMove(change: dayMove!)),
-          const SizedBox(height: 16),
+          Reveal(order: 1, child: _BigMove(change: dayMove!, compact: compact)),
+          SizedBox(height: compact ? 6 : 16),
         ],
         if (info != null) ...[
           Reveal(order: 2, child: info!),
-          const SizedBox(height: 18),
+          SizedBox(height: compact ? 8 : 18),
         ],
         Reveal(
           order: 3,
@@ -80,13 +83,13 @@ class DecisionSelector extends StatelessWidget {
             ],
           ),
         ),
-        const SizedBox(height: 10),
+        SizedBox(height: compact ? 6 : 10),
         for (int i = 0; i < DecisionChoice.all.length; i++)
           // 선택지가 하나씩 올라온다 (간격을 넓혀 하나씩 보이게)
           Reveal(
             order: 4 + i * 2,
             rise: 28,
-            child: _buildChoice(DecisionChoice.all[i]),
+            child: _buildChoice(DecisionChoice.all[i], compact: compact),
           ),
         const SizedBox(height: 6),
         const Reveal(
@@ -100,7 +103,7 @@ class DecisionSelector extends StatelessWidget {
     );
   }
 
-  Widget _buildChoice(String choice) {
+  Widget _buildChoice(String choice, {bool compact = false}) {
     // 팔 자산·살 현금이 없으면 고를 수 없음 (골라도 아무 일도 일어나지 않는 선택을 막는다)
     final String? blocked = switch (choice) {
       DecisionChoice.sellHalf when !hasHoldings => '아직 가진 자산이 없어요',
@@ -120,8 +123,8 @@ class DecisionSelector extends StatelessWidget {
         child: AnimatedContainer(
           duration: TossMotion.base,
           curve: TossMotion.enter,
-          margin: const EdgeInsets.symmetric(vertical: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          margin: EdgeInsets.symmetric(vertical: compact ? 2 : 4),
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: compact ? 8 : 12),
           width: double.infinity,
           decoration: BoxDecoration(
             color: picked
@@ -141,7 +144,7 @@ class DecisionSelector extends StatelessWidget {
               children: [
                 EmojiTile(
                   emoji: DecisionChoice.emoji(choice),
-                  size: 44,
+                  size: compact ? 38 : 44,
                   bg: TossColors.white.withValues(alpha: picked ? 0.2 : 0.1),
                 ),
                 const SizedBox(width: 14),
@@ -150,8 +153,8 @@ class DecisionSelector extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(DecisionChoice.label(choice),
-                          style: const TextStyle(
-                              fontSize: 17,
+                          style: TextStyle(
+                              fontSize: compact ? 16 : 17,
                               fontWeight: FontWeight.w800,
                               color: TossColors.white)),
                       const SizedBox(height: 2),
@@ -187,7 +190,8 @@ class DecisionSelector extends StatelessWidget {
 // 속보 배지 + 헤드라인 (어두운 장면 위에 흰 글씨). 등장할 때 살짝 커지며 나타난다
 class _NewsHeadline extends StatelessWidget {
   final NewsItem news;
-  const _NewsHeadline({required this.news});
+  final bool compact;   // 키 작은 화면: 제목 글자를 조금 작게
+  const _NewsHeadline({required this.news, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -233,11 +237,11 @@ class _NewsHeadline extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          SizedBox(height: compact ? 6 : 10),
           FitHeadline(
             text: news.headline,
-            style: const TextStyle(
-                fontSize: 24,
+            style: TextStyle(
+                fontSize: compact ? 20 : 24,
                 fontWeight: FontWeight.w800,
                 height: 1.35,
                 color: TossColors.white),
@@ -251,7 +255,8 @@ class _NewsHeadline extends StatelessWidget {
 // 그날 S&P500 하루 등락을 크게 — 크게 시작해 제자리로 '쾅'
 class _BigMove extends StatelessWidget {
   final double change;
-  const _BigMove({required this.change});
+  final bool compact;   // 키 작은 화면: 숫자를 조금 작게
+  const _BigMove({required this.change, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
@@ -266,7 +271,7 @@ class _BigMove extends StatelessWidget {
               scale: s, alignment: Alignment.bottomLeft, child: child),
           child: Text(formatSigned(change),
               style: TextStyle(
-                  fontSize: 56,
+                  fontSize: compact ? 38 : 56,
                   height: 1.05,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -2,

@@ -302,7 +302,8 @@ void main() {
   //  화면: 시연 캡처(516×858), 아이폰(390×844), 노트북 브라우저(앱 폭 520 × 800)
   //  글꼴: test/fonts/NotoSansKR.ttf (CI가 받음). 없으면 테스트 글꼴(네모)로는 높이가 달라 건너뛴다
   // =============================================
-  for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800)]) {
+  // 360×740: 작은 휴대폰 (기존에는 위기 대응 장면이 54~98px 넘쳐 '더 산다'가 처음에 안 보였다)
+  for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800), Size(360, 740)]) {
     testWidgets('한 화면에 들어간다 ${size.width.toInt()}×${size.height.toInt()}', (tester) async {
       if (!_fontLoaded) {
         markTestSkipped('test/fonts/NotoSansKR.ttf 없음');
