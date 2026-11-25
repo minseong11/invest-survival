@@ -127,21 +127,25 @@ void main() {
         findsOneWidget);
     expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
     expect(find.textContaining('🚨 10라운드 · 9월 11일'), findsOneWidget); // 전체 화면 장면 위쪽에 라운드·날짜
-    // 장면 안에도 진행 화면과 같은 그래프·종목 칩. 내 자산은 어제 종가, S&P500은 오늘 종가까지
+    // 장면에는 그래프 대신 숫자 두 개 + '그래프 보기'. 내 자산은 어제 종가, S&P500은 오늘 종가까지
     expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(StockChart)),
-        findsOneWidget);
-    expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
-        findsOneWidget);
+        findsNothing);
     expect(find.text('9월 10일 종가'), findsOneWidget);
     expect(find.text('9월 11일까지'), findsOneWidget);
-    // 내 자산 구성: 종목마다 금액·비중, 마지막에 현금 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
-    Finder inScene(Finder f) => find.descendant(of: find.byType(SceneSheet), matching: f);
-    expect(inScene(find.text('내 자산 구성')), findsOneWidget);
-    expect(inScene(find.text('270만원')), findsOneWidget);
-    expect(inScene(find.text('30%')), findsOneWidget);
-    expect(inScene(find.text('현금')), findsOneWidget);
-    expect(inScene(find.text('700만원')), findsOneWidget);
-    expect(inScene(find.text('70%')), findsOneWidget);
+    // 그래프 보기 → 아래에서 그래프·종목 칩·내 자산 구성 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
+    await _tap(tester, find.text('그래프 보기'));
+    Finder inSheet(Finder f) => find.descendant(of: find.byType(BottomSheet), matching: f);
+    expect(inSheet(find.text('지금까지 흐름')), findsOneWidget);
+    expect(inSheet(find.byType(StockChart)), findsOneWidget);
+    expect(inSheet(find.byType(MarketChips)), findsOneWidget);
+    expect(inSheet(find.text('내 자산 구성')), findsOneWidget);
+    expect(inSheet(find.text('270만원')), findsOneWidget);
+    expect(inSheet(find.text('30%')), findsOneWidget);
+    expect(inSheet(find.text('현금')), findsOneWidget);
+    expect(inSheet(find.text('700만원')), findsOneWidget);
+    expect(inSheet(find.text('70%')), findsOneWidget);
+    await _tap(tester, inSheet(find.text('닫기')));
+    expect(find.text('지금까지 흐름'), findsNothing);
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
@@ -295,15 +299,17 @@ void main() {
     await _tap(tester, find.text('이어서 진행하기'));
     await _playUntil(tester, find.text('전략을 골라주세요'));
 
-    // 장면 안 그래프·종목 칩도 진행 화면과 같이 쓴다 — 게임 화면에서 켠 원유가 그대로, 장면에서 금을 켜면 겹쳐짐
-    final sceneChart = find.descendant(
-        of: find.byType(SceneSheet), matching: find.byType(StockChart));
-    Finder sceneChip(String name) => find.descendant(
-        of: find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
+    // 장면의 그래프 보기도 진행 화면과 같은 종목 칩을 쓴다 — 게임 화면에서 켠 원유가 그대로, 시트에서 금을 켜면 겹쳐짐
+    await _tap(tester, find.text('그래프 보기'));
+    final sheetChart = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(StockChart));
+    Finder sheetChip(String name) => find.descendant(
+        of: find.descendant(of: find.byType(BottomSheet), matching: find.byType(MarketChips)),
         matching: find.text(name));
-    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO'});
-    await _tap(tester, sceneChip('금'));
-    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO', 'XAUUSD'});
+    expect(tester.widget<StockChart>(sheetChart).extraTickers, {'USO'});
+    await _tap(tester, sheetChip('금'));
+    expect(tester.widget<StockChart>(sheetChart).extraTickers, {'USO', 'XAUUSD'});
+    await _tap(tester, find.text('닫기'));
     expect(find.text('9월 25일 종가'), findsOneWidget);                 // 내 자산은 어제 종가
     expect(find.text('9월 26일까지'), findsOneWidget);                  // S&P500은 오늘 종가까지
 
@@ -417,10 +423,9 @@ void main() {
     await _tap(tester, find.text('황금 적립'));
     await _tap(tester, find.text('이 전략으로 할게요'));
 
-    // 25라운드: 평소 순위는 AI 없이도 보이고, AI 예측 실패는 안내 + 다시 시도
+    // 25라운드: AI 예측 실패는 안내 + 다시 시도 (평소 순위 칸은 없앴다)
     await _playUntil(tester, find.text('AI 예측'));
-    expect(find.text('📊 평소 순위'), findsOneWidget);
-    expect(find.textContaining('처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요'), findsOneWidget);
+    expect(find.textContaining('평소 순위'), findsNothing);
     await _tap(tester, find.text('AI 예측'));
     expect(find.text('예측을 받지 못했어요'), findsOneWidget);
     expect(find.text('다시 시도'), findsOneWidget);
