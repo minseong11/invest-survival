@@ -29,13 +29,18 @@ import 'fake_game_service.dart';
 
 const _tick = Duration(milliseconds: 500);   // 자동 진행 한 라운드 (배속 ×1)
 
-Future<void> _pumpApp(WidgetTester tester, FakeGameService fake) async {
+Future<void> _pumpApp(WidgetTester tester, FakeGameService fake,
+    {bool realFont = false}) async {
   tester.view.physicalSize = const Size(412 * 3, 892 * 3);   // 412×892 논리 픽셀
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
 
+  final base = buildTossTheme();
   await tester.pumpWidget(MaterialApp(
-    theme: buildTossTheme(),
+    // realFont: 화면 높이 테스트만 실제 한글 글꼴로 (다른 테스트는 기본 테스트 글꼴 그대로)
+    theme: realFont
+        ? base.copyWith(textTheme: base.textTheme.apply(fontFamily: 'Noto Sans KR'))
+        : base,
     home: ScenarioScreen(service: fake),
   ));
   await tester.pump();          // 시나리오 목록 응답
@@ -82,6 +87,9 @@ Future<void> _pageUntil(WidgetTester tester, Finder finder, {int max = 10}) asyn
 }
 
 void main() {
+  // 화면 높이 테스트용 한글 글꼴 — 위젯을 그리기 전에 한 번만 등록
+  setUpAll(_loadKoreanFont);
+
   testWidgets('한 판을 끝까지: 브리핑 장면 → 카드 → 속보 장면 → AI 예측 → 넘겨 보는 결과', (tester) async {
     final fake = FakeGameService();
     await _pumpApp(tester, fake);
@@ -278,13 +286,12 @@ void main() {
   // =============================================
   for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800)]) {
     testWidgets('한 화면에 들어간다 ${size.width.toInt()}×${size.height.toInt()}', (tester) async {
-      if (!await _loadKoreanFont()) {
+      if (!_fontLoaded) {
         markTestSkipped('test/fonts/NotoSansKR.ttf 없음');
         return;
       }
-      await tester.pump();   // 글꼴 등록 알림으로 잡힌 프레임을 여기서 처리
       final fake = FakeGameService();
-      await _pumpApp(tester, fake);
+      await _pumpApp(tester, fake, realFont: true);
       tester.view.physicalSize = size * 3;
       await tester.pump();
 
@@ -606,18 +613,17 @@ class _AiDownService extends FakeGameService {
   }
 }
 
-// 실제 한글 글꼴을 테스트에 불러온다 (Material 기본 글꼴 이름 Roboto로 등록 → 앱 글자 전부에 적용)
+// 실제 한글 글꼴을 테스트에 불러온다 (화면 높이 테스트가 테마 글꼴로 지정해 씀)
 bool _fontLoaded = false;
 Future<bool> _loadKoreanFont() async {
   if (_fontLoaded) return true;
+  TestWidgetsFlutterBinding.ensureInitialized();
   final file = File('test/fonts/NotoSansKR.ttf');
   if (!file.existsSync()) return false;
   final bytes = file.readAsBytesSync();
-  for (final family in const ['Roboto', 'Noto Sans KR']) {
-    final loader = FontLoader(family)
-      ..addFont(Future.value(ByteData.view(bytes.buffer)));
-    await loader.load();
-  }
+  final loader = FontLoader('Noto Sans KR')
+    ..addFont(Future.value(ByteData.view(bytes.buffer)));
+  await loader.load();
   _fontLoaded = true;
   return true;
 }
