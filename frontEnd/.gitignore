@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# 화면 높이 테스트용 글꼴 (CI가 받음)
+/test/fonts/

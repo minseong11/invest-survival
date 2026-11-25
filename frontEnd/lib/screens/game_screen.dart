@@ -135,14 +135,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     return [...base, today];
   }
 
-  // (#125) 오늘 시장 칸 아래 안내. 위기 대응은 선택지 아래에 이미 '오늘 종가로 바로 매매' 안내가 있다
-  String? get _todayCaption {
-    if (!_showCard) return null;
-    return _canUseV2
-        ? '고른 카드는 오늘 종가부터 작동해요. AI 예측도 오늘 종가까지의 시장을 보고 판단해요.'
-        : '고른 카드는 오늘 종가부터 작동해요.';
-  }
-
   // (#125) 사는 카드가 발동하지 않는 상태 — 현금이 총자산의 5% 미만 (게임 계산과 같은 기준)
   bool get _cashLow => !_notStarted && (_currentRound.cashWeight ?? 100) < 5;
 
@@ -399,8 +391,8 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           // ④ 참고용 안내 (평가 결과 반영)
           const SizedBox(height: 12),
           const Text(
-            'AI 예측은 과거 시장으로 학습한 참고용이에요. S&P500의 흐름과 고른 카드만 보고 판단하고, '
-            '처음 보는 시장에서는 틀릴 수 있어요.',
+            'AI 예측은 과거 시장으로 학습한 참고용이에요. 오늘 종가까지의 S&P500 흐름과 고른 카드만 보고 판단하고, '
+            '처음 보는 시장에서는 틀릴 수 있어요. 고른 카드는 오늘 종가부터 작동해요.',
             style: TossText.small,
           ),
         ],
@@ -758,11 +750,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   double get _displayAsset =>
       _currentRound.roundAsset ?? _session.initialAsset.toDouble();
 
-  // 진행 화면 그래프 높이: 화면 높이의 약 4분의 1 (작은 화면 190px ~ 큰 화면 280px)
-  //  기존 190px 고정 — 종목 선을 여러 개 겹쳐 보면 빡빡했고, 키 큰 화면에서는 아래가 비었다.
+  // 진행 화면 그래프 높이: 화면 높이의 약 5분의 1 (150px ~ 210px)
+  //  (장면 단순화 2) 26%(190~280px)에서 줄임 — 아래 '내 포트폴리오'가 스크롤 없이 보이게.
   //  화면 크기로만 정하므로 게임 중에 보유 자산·카드가 늘어도 그래프 크기는 바뀌지 않는다
   double get _chartHeight =>
-      (MediaQuery.sizeOf(context).height * 0.26).clamp(190.0, 280.0);
+      (MediaQuery.sizeOf(context).height * 0.2).clamp(150.0, 210.0);
 
   // (#125) 게임 중에 나가려 하면 한 번 묻는다
   //   헤더의 뒤로 버튼, 브라우저·트랙패드의 뒤로 가기, 안드로이드 뒤로 버튼 모두 여기로 온다.
@@ -1207,113 +1199,151 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     final today    = _todayMarket;
     final assetDay = TodayMarketCard.koreanDate(_currentRound.date);
 
-    Widget dayTag(String text) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-          decoration: BoxDecoration(
-            color: TossColors.white,
-            borderRadius: BorderRadius.circular(TossRadius.sm),
-          ),
-          child: Text(text,
-              style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: TossColors.grey600)),
+    Widget label(String text, String day) => Wrap(
+          spacing: 4,
+          runSpacing: 2,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(text, style: TossText.small),
+            Text(day,
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: TossColors.grey500)),
+          ],
         );
 
-    Widget big(String text, Color color) => Text(text,
-        style: TextStyle(
-            fontSize: 19,
-            fontWeight: FontWeight.w700,
-            color: color,
-            fontFeatures: const [FontFeature.tabularFigures()]));
-
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
       decoration: BoxDecoration(
         color: TossColors.grey50,
         borderRadius: BorderRadius.circular(TossRadius.lg),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Row(
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 2,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        const Text('내 자산', style: TossText.small),
-                        dayTag('$assetDay 종가'),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    big(formatShortWon(asset), TossColors.grey900),
-                    Text(
-                      cash == null
-                          ? formatSigned(rate)
-                          : '${formatSigned(rate)} · 현금 ${cash.toStringAsFixed(0)}%',
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                label('내 자산', '$assetDay 종가'),
+                const SizedBox(height: 2),
+                Text.rich(
+                  TextSpan(children: [
+                    TextSpan(
+                        text: formatShortWon(asset),
+                        style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: TossColors.grey900)),
+                    TextSpan(
+                        text: '  ${formatSigned(rate)}',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: TossColors.rate(rate))),
+                  ]),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (cash != null)
+                  Text('현금 ${cash.toStringAsFixed(0)}%', style: TossText.small),
+              ],
+            ),
+          ),
+          if (spxMove != null)
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  label('S&P500 시작 후',
+                      today == null ? '' : '${TodayMarketCard.koreanDate(today.date)}까지'),
+                  const SizedBox(height: 2),
+                  Text(formatSigned(spxMove),
                       style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: TossColors.rate(rate)),
-                    ),
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                          color: TossColors.rate(spxMove),
+                          fontFeatures: const [FontFeature.tabularFigures()])),
+                ],
+              ),
+            ),
+          // 그래프 보기 — 누르면 아래에서 그래프·종목 칩·내 자산 구성이 올라온다
+          Tooltip(
+            message: '그래프 보기',
+            child: Pressable(
+              onTap: _showSceneChartSheet,
+              child: Container(
+                width: 52,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: TossColors.white,
+                  borderRadius: BorderRadius.circular(TossRadius.md),
+                ),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.show_chart_rounded, size: 20, color: TossColors.blue500),
+                    Text('그래프',
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: TossColors.blue600)),
                   ],
                 ),
               ),
-              if (spxMove != null) ...[
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Wrap(
-                        alignment: WrapAlignment.end,
-                        spacing: 6,
-                        runSpacing: 2,
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        children: [
-                          const Text('S&P500', style: TossText.small),
-                          if (today != null)
-                            dayTag('${TodayMarketCard.koreanDate(today.date)}까지'),
-                        ],
-                      ),
-                      const SizedBox(height: 2),
-                      big(formatSigned(spxMove), TossColors.rate(spxMove)),
-                      const Text('게임 시작 후', style: TossText.small),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+            ),
           ),
-          const SizedBox(height: 10),
-          // 그래프 보기 — 누르면 아래에서 그래프·종목 칩·내 자산 구성이 올라온다
-          Pressable(
-            onTap: _showSceneChartSheet,
-            child: Container(
-              height: 40,
-              decoration: BoxDecoration(
-                color: TossColors.white,
-                borderRadius: BorderRadius.circular(TossRadius.md),
-              ),
-              child: const Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.show_chart_rounded, size: 18, color: TossColors.blue500),
-                  SizedBox(width: 6),
-                  Text('그래프 보기',
-                      style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: TossColors.blue600)),
-                ],
-              ),
+        ],
+      ),
+    );
+  }
+
+  // 오늘 시장 한 줄: 날씨 그림 + 그날 S&P500 등락 (다른 종목의 오늘 등락은 카드마다 붙는다)
+  Widget _buildTodayLine(RoundData today) {
+    final spx  = today.getPrice('^SPX');
+    final mood = spx == null ? null : MarketMood.day(spx.changeRate);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 12, 8),
+      decoration: BoxDecoration(
+        color: TossColors.grey50,
+        borderRadius: BorderRadius.circular(TossRadius.lg),
+      ),
+      child: Row(
+        children: [
+          if (mood != null) ...[
+            MoodHero(mood: mood, size: 40),
+            const SizedBox(width: 10),
+          ],
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('오늘 ${TodayMarketCard.koreanDate(today.date)} 시장',
+                    style: TossText.small),
+                if (spx != null)
+                  Text.rich(
+                    TextSpan(children: [
+                      const TextSpan(text: 'S&P500 '),
+                      TextSpan(
+                          text: formatSigned(spx.changeRate),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: TossColors.rate(spx.changeRate))),
+                      if (mood != null)
+                        TextSpan(
+                            text: ' · ${mood.line}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                                color: TossColors.grey600)),
+                    ]),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: TossColors.grey900),
+                  ),
+              ],
             ),
           ),
         ],
@@ -1446,33 +1476,28 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // (장면 단순화 2) 질문 하나, 답 세 개 — 한 화면에 (스크롤 없이)
           Reveal(
             order: 0,
-            child: Text('$ord 전략을\n골라주세요', style: TossText.title1),
+            child: Text('$ord 전략을 골라주세요', style: TossText.title2),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
           if (!_notStarted) ...[
             Reveal(order: 1, child: _buildSceneStatus()),
             const SizedBox(height: 8),
           ],
           // (#125) 오늘 시장 — 그날 종가로 매매하므로 그날 움직임을 보고 고른다
           if (today != null) ...[
-            Reveal(
-              order: 2,
-              child: TodayMarketCard(today: today, caption: _todayCaption),
-            ),
+            Reveal(order: 2, child: _buildTodayLine(today)),
             const SizedBox(height: 8),
           ],
 
           // (#125) 현금이 총자산의 5%보다 적으면 사는 카드는 발동하지 않는다 — 고르기 전에 알려 준다
-          //        (기존: 75라운드에 현금이 5%뿐인데 사는 카드를 골라도 미리 알 수 없었고,
-          //         결과는 "발동 0회 · 현금 부족" — 실제 플레이 영상에서 확인)
           if (_cashLow) ...[
             InfoBox(
               child: Text(
                 '현금이 총자산의 5%보다 적어요 (지금 ${(_currentRound.cashWeight ?? 0).toStringAsFixed(1)}%). '
-                '조건이 맞을 때나 라운드마다 사는 카드는 현금이 5% 이상일 때만 작동해서 지금은 발동하지 않아요. '
-                '고르는 즉시 사는 카드는 남은 현금으로 바로 사요.',
+                '조건이나 라운드마다 사는 카드는 지금 발동하지 않아요.',
                 style: TossText.caption.copyWith(color: const Color(0xFFC25E00)),
               ),
             ),
@@ -1485,20 +1510,18 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             const SizedBox(height: 8),
           ],
 
-          // AI 도우미: 25·50라운드만. 1·75라운드는 제공하지 않는 이유를 한 줄로
+          // AI 도우미 한 줄: 25·50라운드만. 1·75라운드는 제공하지 않는 이유를 한 줄로
           if (_canUseV2)
             Reveal(order: 3, child: _buildAiHelper())
           else if (_noAiReason != null)
             Reveal(
               order: 3,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 2, 4, 0),
+                padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
                 child: Text(_noAiReason!, style: TossText.small),
               ),
             ),
 
-          const SizedBox(height: 14),
-          const Reveal(order: 3, child: Text('후보 카드', style: TossText.small)),
           const SizedBox(height: 4),
           ...List.generate(_currentCardOptions.length, (i) {
             final card = CardInfo.fromId(_currentCardOptions[i]);
@@ -1513,33 +1536,30 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  // AI 도우미 줄 (25·50라운드)
+  // AI 도우미 한 줄 (25·50라운드) — 큰 상자 대신 글 한 줄 + 버튼 두 개
   Widget _buildAiHelper() {
     final text = switch (_aiState) {
-      AiState.idle    => 'AI에게 후보 3장을\n비교해 달라고 할까요?',
-      AiState.loading => '과거 시장으로\n예측하고 있어요',
-      AiState.done    => '카드마다 AI 예측을\n표시했어요',
+      AiState.idle    => 'AI에게 비교해 달라고 할까요?',
+      AiState.loading => '과거 시장으로 예측하고 있어요',
+      AiState.done    => '카드에 AI 예측을 표시했어요',
       AiState.error   => '예측을 받지 못했어요',
     };
-    return Container(
-      padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-      decoration: BoxDecoration(
-        color: TossColors.blue50,
-        borderRadius: BorderRadius.circular(TossRadius.lg),
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 2, 0, 2),
       child: Column(
         children: [
           Row(
             children: [
-              const Text('🤖', style: TextStyle(fontSize: 26)),
-              const SizedBox(width: 10),
+              const Text('🤖', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 6),
               Expanded(
                 child: Text(text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
-                        fontSize: 14,
-                        height: 1.35,
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w600,
-                        color: TossColors.grey800)),
+                        color: TossColors.grey700)),
               ),
               _buildFeedbackButton(),
               const SizedBox(width: 6),
@@ -1547,7 +1567,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             ],
           ),
           if (_aiState == AiState.loading) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 6),
             ClipRRect(
               borderRadius: BorderRadius.circular(2),
               child: const LinearProgressIndicator(minHeight: 3),
@@ -1594,7 +1614,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             _buildSceneStatus(),
             if (today != null) ...[
               const SizedBox(height: 8),
-              TodayMarketCard(today: today),
+              _buildTodayLine(today),
             ],
           ],
         ),
@@ -1731,6 +1751,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     // (#125) 이 카드가 사고파는 종목이 게임 시작 후 얼마나 움직였는지 (갖고 있지 않아도 보고 고를 수 있게)
     //        1라운드는 위의 시작 전 브리핑에 직전 20거래일 등락이 있다
     final moved = _notStarted ? null : changeSinceStart(_displayRounds, card.ticker);
+    final todayMove = _todayMarket?.getPrice(priceTicker(card.ticker))?.changeRate;
 
     return Pressable(
       onTap: _isSubmitting
@@ -1740,20 +1761,25 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       child: AnimatedContainer(
         duration: TossMotion.base,
         curve: TossMotion.enter,
-        margin: const EdgeInsets.symmetric(vertical: 2),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        margin: const EdgeInsets.symmetric(vertical: 3),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         width: double.infinity,
         decoration: BoxDecoration(
-          color: selected ? TossColors.blue50 : Colors.transparent,
+          color: selected ? TossColors.blue50 : TossColors.grey50,
           borderRadius: BorderRadius.circular(TossRadius.lg),
+          border: Border.all(
+            color: selected ? TossColors.blue500 : Colors.transparent,
+            width: 1.5,
+          ),
         ),
         child: Row(
           children: [
             EmojiTile(
               emoji: card.emoji,
-              bg: selected ? TossColors.white : TossColors.grey100,
+              size: 40,
+              bg: TossColors.white,
             ),
-            const SizedBox(width: 14),
+            const SizedBox(width: 12),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1777,30 +1803,41 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                   ),
                   const SizedBox(height: 2),
                   Text(card.description.replaceAll('\n', ' '),
-                      style: TossText.caption),
-                  if (moved != null) ...[
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TossText.caption.copyWith(height: 1.35)),
+                  // 이 카드 종목의 오늘 등락 · 게임 시작 후 등락 (6개 종목 칩 대신 카드마다)
+                  if (todayMove != null || moved != null) ...[
                     const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text('${tickerName(card.ticker)} · 게임 시작 후 ',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TossText.small),
-                        ),
-                        Text(formatSigned(moved),
-                            style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: TossColors.rate(moved),
-                                fontFeatures: const [FontFeature.tabularFigures()])),
-                      ],
+                    Text.rich(
+                      TextSpan(children: [
+                        TextSpan(text: todayMove != null
+                            ? '${tickerName(card.ticker)} 오늘 '
+                            : '${tickerName(card.ticker)} · '),
+                        if (todayMove != null)
+                          TextSpan(
+                              text: formatSigned(todayMove),
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: TossColors.rate(todayMove))),
+                        if (moved != null) ...[
+                          TextSpan(text: todayMove != null ? ' · 시작 후 ' : '시작 후 '),
+                          TextSpan(
+                              text: formatSigned(moved),
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: TossColors.rate(moved))),
+                        ],
+                      ]),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TossText.small,
                     ),
                   ],
                   // (#125) 팔 S&P500이 없으면 이 카드는 발동해도 아무 일도 일어나지 않는다
                   if (card.id == 8 && !_holdsSpx) ...[
                     const SizedBox(height: 3),
-                    const Text('지금은 가진 S&P500이 없어요. S&P500을 사는 카드와 함께 쓸 때 효과가 있어요',
+                    const Text('지금은 가진 S&P500이 없어요 · S&P500을 사는 카드와 함께 쓰세요',
                         style: TextStyle(
                             fontSize: 12,
                             height: 1.4,

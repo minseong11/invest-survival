@@ -49,6 +49,9 @@ jobs:
       - run: flutter pub get
       # 경고·오류가 있으면 실패. 참고(info) 수준은 Flutter 버전에 따라 달라져 실패로 보지 않는다
       - run: flutter analyze --no-fatal-infos
+      # 화면 높이 테스트(한 화면에 들어가는지)는 실제 한글 글꼴로 잰다 — 저장소에는 넣지 않고 CI에서 받음
+      - name: 한글 글꼴 받기 (화면 높이 테스트용)
+        run: mkdir -p test/fonts && curl -sSL --retry 3 -o test/fonts/NotoSansKR.ttf "https://github.com/google/fonts/raw/main/ofl/notosanskr/NotoSansKR%5Bwght%5D.ttf" && ls -la test/fonts
       - run: flutter test
 
   backend:
