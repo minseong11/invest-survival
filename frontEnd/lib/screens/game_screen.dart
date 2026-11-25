@@ -7,8 +7,10 @@ import '../models/round_data.dart';
 import '../models/action_result.dart';
 import '../models/card_info.dart';
 import '../models/decision.dart';
+import '../models/fixed_ranking.dart';
 import '../models/market.dart';
 import '../models/news_item.dart';
+import '../models/result_analysis.dart' show kMinVisibleGap;
 import '../models/v2_recommend_result.dart';
 import '../services/game_service.dart';
 import '../widgets/decision_selector.dart';
@@ -190,6 +192,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   // V2: 25·50라운드만 (1·75 제외)
   bool get _canUseV2 => [25, 50].contains(_currentRound1);
 
+  // (12주차 피드백 2번) 평소 순위 = 학습 기간(2006~2018) 이 라운드에서 각 카드가 낸 평균 기여도 순서.
+  //  지금 시장은 보지 않는다. 7주차 평가에서 AI(V2)가 처음 보는 시장에서 이 기준보다 낫다는 근거를 찾지 못해
+  //  AI와 나란히 보여 주고 비교하게 한다 (#129에서 빠졌던 것을 부채꼴 카드·설명 칸·AI 비교 시트에 다시 넣음)
+  List<int> get _usualOrder => FixedRanking.order(_currentRound1, _currentCardOptions);
+  static const _medals = ['🥇', '🥈', '🥉'];
+  static const String _usualMeaning = '지금 시장은 보지 않는 과거 평균 순서';
+
   // 1·75라운드: AI 예측을 제공하지 않는 이유 (v6.1 합의 1번)
   //  - 1라운드: so_far 시장 데이터가 없어 V2가 판단할 근거가 없음
   //  - 75라운드: 남은 라운드가 적어 카드 간 결과 차이가 작음
@@ -320,6 +329,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     double bar(double v) => hi - lo < 1e-9 ? 1 : 0.3 + 0.7 * (v - lo) / (hi - lo);
     final topId = ranked.first.cardId;
     var sel = topId;
+    final usual = _usualOrder;
 
     final chosen = await showModalBottomSheet<int>(
       context: context,
@@ -343,6 +353,16 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             final title = isTop
                 ? 'AI라면 $name${_josa(name, '을', '를')} 골라요'
                 : '$name${_josa(name, '은', '는')} $rank위예요';
+            // 평소 순위와 비교 한 줄 (25·50라운드)
+            final usualTop = usual.isEmpty ? null : CardInfo.fromId(usual.first);
+            final usualSel = usual.indexOf(sel);
+            final compare = usualTop == null
+                ? null
+                : isTop
+                    ? (usual.first == topId
+                        ? '평소 순위 1위와 같은 카드예요'
+                        : '평소 순위 1위는 ${usualTop.name}${_josa(usualTop.name, '이에요', '예요')}')
+                    : (usualSel >= 0 ? '평소 순위로는 ${usualSel + 1}위예요' : null);
 
             return RevealScope(
               child: SingleChildScrollView(
@@ -366,6 +386,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       child: Text(title,
                           key: ValueKey(title), style: TossText.title2),
                     ),
+                    if (compare != null) ...[
+                      const SizedBox(height: 4),
+                      Text(compare,
+                          style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w600,
+                              color: TossColors.grey600)),
+                    ],
                     const SizedBox(height: 22),
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -379,6 +407,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                               child: _aiMiniCard(
                                 ranked[i],
                                 bar(ranked[i].contribution),
+                                usualRank: usual.indexOf(ranked[i].cardId),
                                 top: i == 0,
                                 selected: ranked[i].cardId == sel,
                                 onTap: () => setSheet(() => sel = ranked[i].cardId),
@@ -410,9 +439,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                       ),
                     ),
                     const SizedBox(height: 10),
-                    const Text(
+                    Text(
                       'AI는 오늘 종가까지의 S&P500 흐름과 고른 카드만 보고 예측해요. '
-                      '과거 시장으로 배운 참고용이라 틀릴 수 있어요.',
+                      '과거 시장으로 배운 참고용이라 틀릴 수 있어요.'
+                      '${usual.isEmpty ? '' : ' 평소 순위는 $_usualMeaning예요. '
+                          '처음 보는 시장 테스트에서 AI는 평소 순위보다 낫지 않았어요.'}',
                       style: TossText.small,
                     ),
                     const SizedBox(height: 20),
@@ -449,7 +480,10 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 
   Widget _aiMiniCard(CardRanking r, double barRatio,
-      {required bool top, required bool selected, required VoidCallback onTap}) {
+      {required bool top,
+      required bool selected,
+      required VoidCallback onTap,
+      int usualRank = -1}) {
     final card = CardInfo.fromId(r.cardId);
     final tint = card == null
         ? TossColors.grey500
@@ -510,6 +544,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: top ? TossColors.blue600 : TossColors.grey500)),
+            if (usualRank >= 0 && usualRank < _medals.length)
+              Text('${_medals[usualRank]} 평소 ${usualRank + 1}위',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      fontSize: 11, color: TossColors.grey500)),
             const SizedBox(height: 8),
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
@@ -1172,9 +1212,9 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  // "시장보다 22.8%p 앞서요" / "시장보다 3.1%p 뒤처져요"
+  // "시장보다 22.8%p 앞서요" / "시장보다 3.1%p 뒤처져요" / "시장과 같아요"
   Widget _buildGapBadge(double gap) {
-    final ahead = gap >= 0;
+    final ahead = gap >= kMinVisibleGap;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -1182,9 +1222,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         borderRadius: BorderRadius.circular(TossRadius.sm),
       ),
       child: Text(
-        ahead
-            ? '시장보다 ${gap.toStringAsFixed(1)}%p 앞서요'
-            : '시장보다 ${(-gap).toStringAsFixed(1)}%p 뒤처져요',
+        marketGapText(gap),
         style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w700,
@@ -1757,6 +1795,13 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       int depth(int i) => i == picked ? 2 : (i == mid.round() ? 1 : 0);
       final order = List.generate(n, (i) => i)
         ..sort((a, b) => depth(a).compareTo(depth(b)));
+      // 위에 놓인 옆 카드가 덮는 쪽은 글자 여백을 겹친 폭만큼 넓힌다. 기울어진 카드의 아래쪽(이름 자리)은
+      //  안쪽으로 더 들어오므로 카드 폭의 8%를 더한다
+      //  (기존: 오른쪽 카드 이름 앞부분이 가운데 카드에 가려 "포탐욕", "권 피난처"처럼 보였다)
+      final overlap = n == 1 ? 0.0 : math.max(0.0, cardW - step) + cardW * 0.08;
+      bool coveredBy(int top, int i) =>
+          top >= 0 && top < n && depth(top) > depth(i);
+      final usual = _usualOrder;
 
       return Stack(
         clipBehavior: Clip.none,
@@ -1774,7 +1819,14 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                 rise: 120,
                 child: Transform.rotate(
                   angle: (i - mid) * 0.12,
-                  child: _buildFanCard(cards[i], cardW, picked >= 0 && picked != i),
+                  child: _buildFanCard(
+                    cards[i],
+                    cardW,
+                    picked >= 0 && picked != i,
+                    insetLeft:  coveredBy(i - 1, i) ? overlap : 0,
+                    insetRight: coveredBy(i + 1, i) ? overlap : 0,
+                    usualRank:  usual.indexOf(cards[i].id),
+                  ),
                 ),
               ),
             ),
@@ -1783,114 +1835,163 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     });
   }
 
-  Widget _buildFanCard(CardInfo card, double w, bool dimmed) {
+  // insetLeft / insetRight: 옆 카드에 덮이는 폭 — 그만큼 글자를 안쪽으로 (왼쪽이 덮이면 오른쪽 정렬)
+  //  usualRank: 평소 순위(0부터, 없으면 -1) — 25·50라운드 카드에 🥇 평소 1위처럼
+  Widget _buildFanCard(CardInfo card, double w, bool dimmed,
+      {double insetLeft = 0, double insetRight = 0, int usualRank = -1}) {
     final selected = _pendingCardId == card.id;
     final aiPick   = _aiRecommendedCardId == card.id;
     final tint     = kTickerColors[priceTicker(card.ticker)] ?? TossColors.blue500;
+    final alignEnd = insetLeft > 0 && insetRight == 0;
+    final textW    = math.max(40.0, w - 20 - insetLeft - insetRight);
 
-    return Pressable(
-      onTap: _isSubmitting
-          ? null
-          : () => setState(() => _pendingCardId = card.id),
-      scale: 0.97,
-      child: AnimatedSlide(
-        offset: Offset(0, selected ? -0.07 : 0),
-        duration: TossMotion.base,
-        curve: TossMotion.spring,
-        child: AnimatedScale(
-          scale: selected ? 1.06 : 1,
+    // 화면 읽기 기능에서 카드 하나가 '버튼'으로 읽히게 (고른 카드는 '선택됨')
+    return Semantics(
+      button: true,
+      selected: selected,
+      child: Pressable(
+        onTap: _isSubmitting
+            ? null
+            : () => setState(() => _pendingCardId = card.id),
+        scale: 0.97,
+        child: AnimatedSlide(
+          offset: Offset(0, selected ? -0.07 : 0),
           duration: TossMotion.base,
           curve: TossMotion.spring,
-          child: AnimatedOpacity(
-            opacity: dimmed ? 0.8 : 1,
+          child: AnimatedScale(
+            scale: selected ? 1.06 : 1,
             duration: TossMotion.base,
-            child: AnimatedContainer(
+            curve: TossMotion.spring,
+            child: AnimatedOpacity(
+              opacity: dimmed ? 0.8 : 1,
               duration: TossMotion.base,
-              clipBehavior: Clip.antiAlias,
-              decoration: BoxDecoration(
-                color: TossColors.white,
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(
-                  color: selected ? TossColors.blue500 : TossColors.grey200,
-                  width: selected ? 2 : 1,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: selected
-                        ? TossColors.blue500.withValues(alpha: 0.25)
-                        : Colors.black.withValues(alpha: 0.07),
-                    blurRadius: selected ? 22 : 12,
-                    offset: const Offset(0, 6),
+              child: AnimatedContainer(
+                duration: TossMotion.base,
+                clipBehavior: Clip.antiAlias,
+                decoration: BoxDecoration(
+                  color: TossColors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: selected ? TossColors.blue500 : TossColors.grey200,
+                    width: selected ? 2 : 1,
                   ),
-                ],
-              ),
-              child: Stack(
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(
-                        height: w * 0.66,
-                        alignment: Alignment.center,
-                        color: tint.withValues(alpha: 0.12),
-                        child: Text(card.emoji,
-                            style: TextStyle(fontSize: w * 0.3)),
-                      ),
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
-                          // 작은 화면에서는 글자를 줄여 카드 안에 넣는다 (넘치지 않게)
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.topLeft,
-                            child: SizedBox(
-                              width: w - 20,
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(card.name,
-                                      maxLines: 2,
-                                      style: const TextStyle(
-                                          fontSize: 15,
-                                          height: 1.3,
-                                          fontWeight: FontWeight.w800,
-                                          color: TossColors.grey900)),
-                                  const SizedBox(height: 2),
-                                  Text(tickerName(card.ticker),
-                                      maxLines: 1,
-                                      style: TossText.small),
-                                ],
+                  boxShadow: [
+                    BoxShadow(
+                      color: selected
+                          ? TossColors.blue500.withValues(alpha: 0.25)
+                          : Colors.black.withValues(alpha: 0.07),
+                      blurRadius: selected ? 22 : 12,
+                      offset: const Offset(0, 6),
+                    ),
+                  ],
+                ),
+                child: Stack(
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          height: w * 0.66,
+                          alignment: Alignment.center,
+                          color: tint.withValues(alpha: 0.12),
+                          child: Text(card.emoji,
+                              style: TextStyle(fontSize: w * 0.3)),
+                        ),
+                        Expanded(
+                          child: AnimatedPadding(
+                            duration: TossMotion.base,
+                            padding: EdgeInsets.fromLTRB(
+                                10 + insetLeft, 8, 10 + insetRight, 8),
+                            // 작은 화면에서는 글자를 줄여 카드 안에 넣는다 (넘치지 않게)
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment:
+                                  alignEnd ? Alignment.topRight : Alignment.topLeft,
+                              child: SizedBox(
+                                width: textW,
+                                child: Column(
+                                  crossAxisAlignment: alignEnd
+                                      ? CrossAxisAlignment.end
+                                      : CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    // 이름은 한 줄로: 좁으면 줄바꿈 대신 살짝 작게
+                                    //  ("역발상 투 / 자"처럼 글자 중간에서 끊기지 않게)
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: alignEnd
+                                          ? Alignment.centerRight
+                                          : Alignment.centerLeft,
+                                      child: Text(card.name,
+                                          maxLines: 1,
+                                          softWrap: false,
+                                          style: const TextStyle(
+                                              fontSize: 15,
+                                              height: 1.3,
+                                              fontWeight: FontWeight.w800,
+                                              color: TossColors.grey900)),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(tickerName(card.ticker),
+                                        maxLines: 1,
+                                        style: TossText.small),
+                                    if (usualRank >= 0 && usualRank < _medals.length) ...[
+                                      const SizedBox(height: 4),
+                                      // 좁으면 줄바꿈 대신 살짝 작게 ("평소 2 / 위"처럼 끊기지 않게)
+                                      FittedBox(
+                                        fit: BoxFit.scaleDown,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 6, vertical: 2),
+                                          decoration: BoxDecoration(
+                                            color: TossColors.grey100,
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                          child: Text(
+                                              '${_medals[usualRank]} 평소 ${usualRank + 1}위',
+                                              maxLines: 1,
+                                              softWrap: false,
+                                              style: const TextStyle(
+                                                  fontSize: 11.5,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: TossColors.grey700)),
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  if (aiPick)
-                    const Positioned(
-                      top: 8,
-                      left: 8,
-                      child: TossBadge(
-                          label: 'AI 1위',
-                          bg: TossColors.blue500,
-                          fg: TossColors.white),
+                      ],
                     ),
-                  if (selected)
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: Container(
-                        width: 22,
-                        height: 22,
-                        decoration: const BoxDecoration(
-                            color: TossColors.blue500, shape: BoxShape.circle),
-                        child: const Icon(Icons.check_rounded,
-                            size: 15, color: TossColors.white),
+                    // 왼쪽이 옆 카드에 덮이면 배지는 오른쪽 위에 (이때 이 카드는 고른 카드가 아니라 체크 표시와 겹치지 않는다)
+                    if (aiPick)
+                      Positioned(
+                        top: 8,
+                        left: insetLeft > 0 ? null : 8,
+                        right: insetLeft > 0 ? 8 : null,
+                        child: const TossBadge(
+                            label: 'AI 1위',
+                            bg: TossColors.blue500,
+                            fg: TossColors.white),
                       ),
-                    ),
-                ],
+                    if (selected)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          decoration: const BoxDecoration(
+                              color: TossColors.blue500, shape: BoxShape.circle),
+                          child: const Icon(Icons.check_rounded,
+                              size: 15, color: TossColors.white),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1975,6 +2076,16 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
                           style: const TextStyle(
                               fontSize: 13, color: TossColors.grey700),
                         ),
+                      ],
+                      // 평소 순위와 그 뜻 (25·50라운드)
+                      if (_usualOrder.indexOf(card.id) case final r
+                          when r >= 0 && r < _medals.length) ...[
+                        const SizedBox(height: 4),
+                        Text('${_medals[r]} 평소 ${r + 1}위 · $_usualMeaning',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                fontSize: 12.5, color: TossColors.grey600)),
                       ],
                       // (#125) 팔 S&P500이 없으면 이 카드는 발동해도 아무 일도 일어나지 않는다
                       if (card.id == 8 && !_holdsSpx) ...[
@@ -2262,4 +2373,16 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       onTap: _isAutoPlaying ? _stopAutoPlay : _startAutoPlay,
     );
   }
+}
+
+// =============================================
+// 진행 화면 점수판: 내 수익률 − 같은 기간 S&P500 (%p)
+//  표시하면 0.0%p인 차이는 "시장과 같아요" — 결과 화면과 같은 기준(kMinVisibleGap)
+//  (기존: 1라운드처럼 차이가 0이면 "시장보다 0.0%p 앞서요", 아주 작은 마이너스면 "0.0%p 뒤처져요")
+// =============================================
+String marketGapText(double gap) {
+  if (gap.abs() < kMinVisibleGap) return '시장과 같아요';
+  return gap > 0
+      ? '시장보다 ${gap.toStringAsFixed(1)}%p 앞서요'
+      : '시장보다 ${(-gap).toStringAsFixed(1)}%p 뒤처져요';
 }

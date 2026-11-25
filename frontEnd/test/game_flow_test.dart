@@ -180,6 +180,13 @@ void main() {
     await _playUntil(tester, find.text('물어보기'));
     expect(find.text('두 번째 전략을 골라주세요'), findsOneWidget);
     expect(find.text('AI에게 3장을 비교해 달라고 할까요?'), findsOneWidget);
+    // (12주차 피드백 2번) 평소 순위는 AI 없이도 카드에 보인다 (후보 1·3·4 → 평소 1 › 4 › 3)
+    expect(find.text('🥇 평소 1위'), findsOneWidget);
+    expect(find.text('🥈 평소 2위'), findsOneWidget);
+    expect(find.text('🥉 평소 3위'), findsOneWidget);
+    // 카드를 누르면 설명 칸에 평소 순위와 그 뜻
+    await _tap(tester, find.text('거인의 어깨'));
+    expect(find.text('🥇 평소 1위 · 지금 시장은 보지 않는 과거 평균 순서'), findsOneWidget);
     expect(find.text('오늘 9월 26일 시장'), findsOneWidget);
     await _tap(tester, find.text('물어보기'));
     expect(fake.calls, contains('ai:25'));
@@ -193,12 +200,18 @@ void main() {
     expect(inAi(find.text('✨ AI가 3장을 비교했어요')), findsOneWidget);
     expect(inAi(find.textContaining('AI라면 ')), findsOneWidget);
     expect(inAi(find.text('AI 추천')), findsOneWidget);
+    // AI 순위와 평소 순위를 나란히: AI 1위(공포탐욕)는 평소 3위, 평소 1위는 거인의 어깨
+    expect(inAi(find.text('평소 순위 1위는 거인의 어깨예요')), findsOneWidget);
+    expect(inAi(find.text('🥉 평소 3위')), findsOneWidget);
+    expect(inAi(find.textContaining('처음 보는 시장 테스트에서 AI는 평소 순위보다 낫지 않았어요')),
+        findsOneWidget);
     expect(inAi(find.text('테스트 이유 문장이에요.')), findsOneWidget);
     expect(inAi(find.textContaining('오늘 종가까지의 S&P500 흐름')), findsOneWidget);   // AI와 같은 정보(오늘 종가)
     expect(inAi(find.textContaining('%p')), findsNothing);
     // 다른 카드를 누르면 그 카드의 순위와 규칙
     await _tap(tester, inAi(find.text('3위')));
     expect(inAi(find.textContaining('3위예요')), findsOneWidget);
+    expect(inAi(find.text('평소 순위로는 2위예요')), findsOneWidget);   // AI 3위 금 피난처는 평소 2위
     await _tap(tester, inAi(find.text('1위')));
     expect(inAi(find.textContaining('AI라면 ')), findsOneWidget);
     // 시트에서 바로 고른다
@@ -224,6 +237,7 @@ void main() {
     // ── 75라운드: 마지막 카드 → 100라운드 ──
     await _playUntil(tester, find.text('전략을 골라주세요'));
     expect(find.text('마지막 전략을 골라주세요'), findsOneWidget);
+    expect(find.textContaining('평소 1위'), findsNothing);             // 평소 순위는 25·50라운드만
     await _tap(tester, find.text('기술의 파도'));
     await _tap(tester, find.text('이 전략으로 할게요'));
     await _playUntil(tester, find.text('결과 보기'));
@@ -302,7 +316,8 @@ void main() {
   //  화면: 시연 캡처(516×858), 아이폰(390×844), 노트북 브라우저(앱 폭 520 × 800)
   //  글꼴: test/fonts/NotoSansKR.ttf (CI가 받음). 없으면 테스트 글꼴(네모)로는 높이가 달라 건너뛴다
   // =============================================
-  for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800)]) {
+  // 360×740: 작은 휴대폰 (기존에는 위기 대응 장면이 54~98px 넘쳐 '더 산다'가 처음에 안 보였다)
+  for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800), Size(360, 740)]) {
     testWidgets('한 화면에 들어간다 ${size.width.toInt()}×${size.height.toInt()}', (tester) async {
       if (!_fontLoaded) {
         markTestSkipped('test/fonts/NotoSansKR.ttf 없음');
@@ -531,9 +546,9 @@ void main() {
     await _tap(tester, find.text('황금 적립'));
     await _tap(tester, find.text('이 전략으로 할게요'));
 
-    // 25라운드: AI 예측 실패는 안내 + 다시 시도 (평소 순위 칸은 없앴다)
+    // 25라운드: 평소 순위는 AI 없이도 보이고, AI 예측 실패는 안내 + 다시 시도
     await _playUntil(tester, find.text('물어보기'));
-    expect(find.textContaining('평소 순위'), findsNothing);
+    expect(find.text('🥇 평소 1위'), findsOneWidget);
     await _tap(tester, find.text('물어보기'));
     expect(find.text('예측을 받지 못했어요'), findsOneWidget);
     expect(find.text('다시 시도'), findsOneWidget);
