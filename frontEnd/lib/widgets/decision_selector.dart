@@ -68,13 +68,15 @@ class DecisionSelector extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         for (int i = 0; i < DecisionChoice.all.length; i++)
+          // 선택지가 하나씩 올라온다 (간격을 넓혀 하나씩 보이게)
           Reveal(
-            order: 4 + i,
+            order: 4 + i * 2,
+            rise: 28,
             child: _buildChoice(DecisionChoice.all[i]),
           ),
         const SizedBox(height: 6),
         const Reveal(
-          order: 6,
+          order: 9,
           child: Text(
             '오늘 종가로 바로 매매하고, 전략 카드는 계속 작동해요.',
             style: TossText.small,

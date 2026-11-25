@@ -1,4 +1,8 @@
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/services.dart' show FontLoader;
 import 'package:flutter/material.dart';
 import 'package:flutter_application_1/models/coach_comment.dart';
 import 'package:flutter_application_1/models/result_analysis.dart';
@@ -25,13 +29,18 @@ import 'fake_game_service.dart';
 
 const _tick = Duration(milliseconds: 500);   // 자동 진행 한 라운드 (배속 ×1)
 
-Future<void> _pumpApp(WidgetTester tester, FakeGameService fake) async {
+Future<void> _pumpApp(WidgetTester tester, FakeGameService fake,
+    {bool realFont = false}) async {
   tester.view.physicalSize = const Size(412 * 3, 892 * 3);   // 412×892 논리 픽셀
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
 
+  final base = buildTossTheme();
   await tester.pumpWidget(MaterialApp(
-    theme: buildTossTheme(),
+    // realFont: 화면 높이 테스트만 실제 한글 글꼴로 (다른 테스트는 기본 테스트 글꼴 그대로)
+    theme: realFont
+        ? base.copyWith(textTheme: base.textTheme.apply(fontFamily: 'Noto Sans KR'))
+        : base,
     home: ScenarioScreen(service: fake),
   ));
   await tester.pump();          // 시나리오 목록 응답
@@ -78,6 +87,9 @@ Future<void> _pageUntil(WidgetTester tester, Finder finder, {int max = 10}) asyn
 }
 
 void main() {
+  // 화면 높이 테스트용 한글 글꼴 — 위젯을 그리기 전에 한 번만 등록
+  setUpAll(_loadKoreanFont);
+
   testWidgets('한 판을 끝까지: 브리핑 장면 → 카드 → 속보 장면 → AI 예측 → 넘겨 보는 결과', (tester) async {
     final fake = FakeGameService();
     await _pumpApp(tester, fake);
@@ -105,7 +117,7 @@ void main() {
     await _tap(tester, find.text('첫 전략 고르기'));
 
     // ── 1라운드: 카드 선택 장면 ──
-    expect(find.text('첫 번째 전략을\n골라주세요'), findsOneWidget);
+    expect(find.text('첫 번째 전략을 골라주세요'), findsOneWidget);
     expect(find.text('오늘 9월 2일 시장'), findsOneWidget);           // 1라운드도 그날 종가로 매매
     expect(find.text('전략을 골라주세요'), findsOneWidget);            // 아래 고정 버튼
     // 팔 주식이 없을 때 매도 카드에는 안내가 붙는다
@@ -114,7 +126,7 @@ void main() {
     await _tap(tester, find.text('황금 적립'));
     await _tap(tester, find.text('이 전략으로 할게요'));
     expect(fake.calls, contains('card:1:2'));
-    expect(find.text('첫 번째 전략을\n골라주세요'), findsNothing);      // 고르면 장면이 내려감
+    expect(find.text('첫 번째 전략을 골라주세요'), findsNothing);      // 고르면 장면이 내려감
     expect(find.text('시작 전 시장 지도'), findsNothing);
 
     // ── 10라운드: 속보 장면 (나쁜 소식) ──
@@ -127,21 +139,25 @@ void main() {
         findsOneWidget);
     expect(find.text('오늘 9월 11일 시장'), findsOneWidget);          // 고르기 전에 그날 움직임 (AI와 같은 정보)
     expect(find.textContaining('🚨 10라운드 · 9월 11일'), findsOneWidget); // 전체 화면 장면 위쪽에 라운드·날짜
-    // 장면 안에도 진행 화면과 같은 그래프·종목 칩. 내 자산은 어제 종가, S&P500은 오늘 종가까지
+    // 장면에는 그래프 대신 숫자 두 개 + '그래프 보기'. 내 자산은 어제 종가, S&P500은 오늘 종가까지
     expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(StockChart)),
-        findsOneWidget);
-    expect(find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
-        findsOneWidget);
+        findsNothing);
     expect(find.text('9월 10일 종가'), findsOneWidget);
     expect(find.text('9월 11일까지'), findsOneWidget);
-    // 내 자산 구성: 종목마다 금액·비중, 마지막에 현금 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
-    Finder inScene(Finder f) => find.descendant(of: find.byType(SceneSheet), matching: f);
-    expect(inScene(find.text('내 자산 구성')), findsOneWidget);
-    expect(inScene(find.text('270만원')), findsOneWidget);
-    expect(inScene(find.text('30%')), findsOneWidget);
-    expect(inScene(find.text('현금')), findsOneWidget);
-    expect(inScene(find.text('700만원')), findsOneWidget);
-    expect(inScene(find.text('70%')), findsOneWidget);
+    // 그래프 보기 → 아래에서 그래프·종목 칩·내 자산 구성 (가짜 응답: S&P500 270만원 30%, 현금 700만원 70%)
+    await _tap(tester, find.byTooltip('그래프 보기'));
+    Finder inSheet(Finder f) => find.descendant(of: find.byType(BottomSheet), matching: f);
+    expect(inSheet(find.text('지금까지 흐름')), findsOneWidget);
+    expect(inSheet(find.byType(StockChart)), findsOneWidget);
+    expect(inSheet(find.byType(MarketChips)), findsOneWidget);
+    expect(inSheet(find.text('내 자산 구성')), findsOneWidget);
+    expect(inSheet(find.text('270만원')), findsOneWidget);
+    expect(inSheet(find.text('30%')), findsOneWidget);
+    expect(inSheet(find.text('현금')), findsOneWidget);
+    expect(inSheet(find.text('700만원')), findsOneWidget);
+    expect(inSheet(find.text('70%')), findsOneWidget);
+    await _tap(tester, inSheet(find.text('닫기')));
+    expect(find.text('지금까지 흐름'), findsNothing);
     await _tap(tester, find.text('절반 판다'));
     await _tap(tester, find.text('이렇게 할게요'));
     expect(fake.calls, contains('decision:10:SELL_HALF'));
@@ -154,9 +170,8 @@ void main() {
 
     // ── 25라운드: AI 예측·설명 ──
     await _playUntil(tester, find.text('AI 예측'));
-    expect(find.text('두 번째 전략을\n골라주세요'), findsOneWidget);
+    expect(find.text('두 번째 전략을 골라주세요'), findsOneWidget);
     expect(find.text('오늘 9월 26일 시장'), findsOneWidget);
-    expect(find.textContaining('AI 예측도 오늘 종가까지'), findsOneWidget);
     await _tap(tester, find.text('AI 예측'));
     expect(fake.calls, contains('ai:25'));
     expect(find.text('AI 1위'), findsOneWidget);
@@ -167,6 +182,7 @@ void main() {
     expect(find.text('후보 카드 예측 비교'), findsOneWidget);
     expect(find.textContaining('아직 고르지 않은 카드 전체의 평균과 비교한 예상 차이'), findsOneWidget);
     expect(find.textContaining('최종 수익률을 예측한 값이 아니에요'), findsOneWidget);
+    expect(find.textContaining('오늘 종가까지의 S&P500 흐름'), findsOneWidget);   // AI와 같은 정보(오늘 종가)
     await _tap(tester, find.text('확인했어요'));
     await _tap(tester, find.text('AI 1위'));
     await _tap(tester, find.text('이 전략으로 할게요'));
@@ -189,7 +205,7 @@ void main() {
 
     // ── 75라운드: 마지막 카드 → 100라운드 ──
     await _playUntil(tester, find.text('전략을 골라주세요'));
-    expect(find.text('마지막 전략을\n골라주세요'), findsOneWidget);
+    expect(find.text('마지막 전략을 골라주세요'), findsOneWidget);
     await _tap(tester, find.text('기술의 파도'));
     await _tap(tester, find.text('이 전략으로 할게요'));
     await _playUntil(tester, find.text('결과 보기'));
@@ -261,6 +277,68 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
+  // =============================================
+  // 한 화면에 들어가는지 — 실제 한글 글꼴로 재고, 숫자로 통과·실패를 낸다
+  //  · 카드 선택 장면(1·25·50·75라운드), 위기 대응 장면: 스크롤 0
+  //  · 진행 화면: 아래 '내 포트폴리오' 제목과 첫 줄이 하단 버튼 위에 보임
+  //  화면: 시연 캡처(516×858), 아이폰(390×844), 노트북 브라우저(앱 폭 520 × 800)
+  //  글꼴: test/fonts/NotoSansKR.ttf (CI가 받음). 없으면 테스트 글꼴(네모)로는 높이가 달라 건너뛴다
+  // =============================================
+  for (final size in const [Size(516, 858), Size(390, 844), Size(520, 800)]) {
+    testWidgets('한 화면에 들어간다 ${size.width.toInt()}×${size.height.toInt()}', (tester) async {
+      if (!_fontLoaded) {
+        markTestSkipped('test/fonts/NotoSansKR.ttf 없음');
+        return;
+      }
+      final fake = FakeGameService();
+      await _pumpApp(tester, fake, realFont: true);
+      tester.view.physicalSize = size * 3;
+      await tester.pump();
+
+      double sceneOverflow() {
+        final scroll = find.descendant(
+            of: find.byType(SceneSheet), matching: find.byType(Scrollable));
+        return tester.state<ScrollableState>(scroll.first).position.maxScrollExtent;
+      }
+
+      await _tap(tester, find.text('테스트 위기'));
+      await _tap(tester, find.text('건너뛰기'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(sceneOverflow(), lessThanOrEqualTo(1), reason: '1라운드 카드 선택');
+      await _tap(tester, find.text('황금 적립'));
+      await _tap(tester, find.text('이 전략으로 할게요'));
+
+      await _playUntil(tester, find.text('대응을 골라주세요'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(sceneOverflow(), lessThanOrEqualTo(1), reason: '10라운드 위기 대응');
+      await _tap(tester, find.text('버틴다'));
+      await _tap(tester, find.text('이렇게 할게요'));
+
+      // 진행 화면: 포트폴리오가 하단 버튼 위에 보인다
+      await _tap(tester, find.text('잠시 멈추기'));
+      final portfolio = tester.getRect(find.text('내 포트폴리오'));
+      final button = tester.getRect(find.text('이어서 진행하기'));
+      expect(portfolio.bottom + 40, lessThan(button.top - 12),
+          reason: '진행 화면에서 내 포트폴리오 제목과 첫 줄이 보여야 함');
+      await _tap(tester, find.text('이어서 진행하기'));
+
+      await _playUntil(tester, find.text('AI 예측'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(sceneOverflow(), lessThanOrEqualTo(1), reason: '25라운드 카드 선택');
+      await _tap(tester, find.text('AI 예측'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(sceneOverflow(), lessThanOrEqualTo(1), reason: '25라운드 AI 예측 표시 후');
+      await _tap(tester, find.text('AI 1위'));
+      await _tap(tester, find.text('이 전략으로 할게요'));
+
+      await _playUntil(tester, find.text('전략을 골라주세요'));
+      await tester.pump(const Duration(seconds: 1));
+      expect(sceneOverflow(), lessThanOrEqualTo(1), reason: '50라운드 카드 선택');
+
+      await tester.pump(const Duration(seconds: 6));
+    });
+  }
+
   testWidgets('갖고 있지 않은 종목도 흐름을 보고, 눌러서 차트에 겹쳐 볼 수 있다', (tester) async {
     final fake = FakeGameService();
     await _pumpApp(tester, fake);
@@ -288,22 +366,24 @@ void main() {
     await _tap(tester, chip('금'));
     expect(chart().extraTickers, {'USO'});
 
-    // 진행 화면 그래프는 화면 높이의 약 4분의 1 (412×892 → 약 232px, 기존 190px 고정)
-    expect(tester.getSize(find.byType(StockChart)).height, closeTo(892 * 0.26, 0.5));
+    // 진행 화면 그래프는 화면 높이의 약 5분의 1 (412×892 → 약 178px) — 아래 포트폴리오가 보이게
+    expect(tester.getSize(find.byType(StockChart)).height, closeTo(892 * 0.2, 0.5));
 
     // 25라운드 카드 선택 장면: 카드가 사고파는 종목의 게임 시작 후 등락 (금 카드는 GLD → 서버 가격 XAUUSD)
     await _tap(tester, find.text('이어서 진행하기'));
     await _playUntil(tester, find.text('전략을 골라주세요'));
 
-    // 장면 안 그래프·종목 칩도 진행 화면과 같이 쓴다 — 게임 화면에서 켠 원유가 그대로, 장면에서 금을 켜면 겹쳐짐
-    final sceneChart = find.descendant(
-        of: find.byType(SceneSheet), matching: find.byType(StockChart));
-    Finder sceneChip(String name) => find.descendant(
-        of: find.descendant(of: find.byType(SceneSheet), matching: find.byType(MarketChips)),
+    // 장면의 그래프 보기도 진행 화면과 같은 종목 칩을 쓴다 — 게임 화면에서 켠 원유가 그대로, 시트에서 금을 켜면 겹쳐짐
+    await _tap(tester, find.byTooltip('그래프 보기'));
+    final sheetChart = find.descendant(
+        of: find.byType(BottomSheet), matching: find.byType(StockChart));
+    Finder sheetChip(String name) => find.descendant(
+        of: find.descendant(of: find.byType(BottomSheet), matching: find.byType(MarketChips)),
         matching: find.text(name));
-    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO'});
-    await _tap(tester, sceneChip('금'));
-    expect(tester.widget<StockChart>(sceneChart).extraTickers, {'USO', 'XAUUSD'});
+    expect(tester.widget<StockChart>(sheetChart).extraTickers, {'USO'});
+    await _tap(tester, sheetChip('금'));
+    expect(tester.widget<StockChart>(sheetChart).extraTickers, {'USO', 'XAUUSD'});
+    await _tap(tester, find.text('닫기'));
     expect(find.text('9월 25일 종가'), findsOneWidget);                 // 내 자산은 어제 종가
     expect(find.text('9월 26일까지'), findsOneWidget);                  // S&P500은 오늘 종가까지
 
@@ -312,9 +392,10 @@ void main() {
     expect(find.bySemanticsLabel('게임 나가기'), findsOneWidget);
     expect(find.byTooltip('게임 나가기'), findsOneWidget);
     semantics.dispose();
-    expect(find.text('금 · 게임 시작 후 '), findsOneWidget);           // 금 피난처
-    expect(find.text('S&P500 · 게임 시작 후 '), findsNWidgets(2));     // 거인의 어깨, 공포탐욕
-    expect(find.text('+4.8%'), findsWidgets);                          // 금 피난처 (1→25라운드, 그날까지)
+    // 카드마다 그 종목의 오늘 등락 · 게임 시작 후 등락
+    expect(find.textContaining('금 오늘 '), findsOneWidget);             // 금 피난처
+    expect(find.textContaining('S&P500 오늘 '), findsNWidgets(2));       // 거인의 어깨, 공포탐욕
+    expect(find.textContaining('시작 후 +4.8%'), findsWidgets);          // 금 피난처 (1→25라운드, 그날까지)
 
     await tester.pump(const Duration(seconds: 6));
   });
@@ -417,10 +498,9 @@ void main() {
     await _tap(tester, find.text('황금 적립'));
     await _tap(tester, find.text('이 전략으로 할게요'));
 
-    // 25라운드: 평소 순위는 AI 없이도 보이고, AI 예측 실패는 안내 + 다시 시도
+    // 25라운드: AI 예측 실패는 안내 + 다시 시도 (평소 순위 칸은 없앴다)
     await _playUntil(tester, find.text('AI 예측'));
-    expect(find.text('📊 평소 순위'), findsOneWidget);
-    expect(find.textContaining('처음 보는 시장 테스트에서 평소 순위보다 낫지 않았어요'), findsOneWidget);
+    expect(find.textContaining('평소 순위'), findsNothing);
     await _tap(tester, find.text('AI 예측'));
     expect(find.text('예측을 받지 못했어요'), findsOneWidget);
     expect(find.text('다시 시도'), findsOneWidget);
@@ -531,4 +611,19 @@ class _AiDownService extends FakeGameService {
     }
     return super.getResultCoach(sessionId: sessionId);
   }
+}
+
+// 실제 한글 글꼴을 테스트에 불러온다 (화면 높이 테스트가 테마 글꼴로 지정해 씀)
+bool _fontLoaded = false;
+Future<bool> _loadKoreanFont() async {
+  if (_fontLoaded) return true;
+  TestWidgetsFlutterBinding.ensureInitialized();
+  final file = File('test/fonts/NotoSansKR.ttf');
+  if (!file.existsSync()) return false;
+  final bytes = file.readAsBytesSync();
+  final loader = FontLoader('Noto Sans KR')
+    ..addFont(Future.value(ByteData.view(bytes.buffer)));
+  await loader.load();
+  _fontLoaded = true;
+  return true;
 }

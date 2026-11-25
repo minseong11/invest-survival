@@ -67,8 +67,9 @@ class _RevealInherited extends InheritedWidget {
 
 class Reveal extends StatefulWidget {
   final int order;
+  final double rise;   // 아래에서 올라오는 거리(px). 선택지는 크게 해서 한 장씩 올라오는 느낌을 준다
   final Widget child;
-  const Reveal({super.key, required this.order, required this.child});
+  const Reveal({super.key, required this.order, this.rise = 14, required this.child});
 
   @override
   State<Reveal> createState() => _RevealState();
@@ -112,7 +113,7 @@ class _RevealState extends State<Reveal> with SingleTickerProviderStateMixin {
       builder: (_, child) => Opacity(
         opacity: _a.value.clamp(0.0, 1.0),
         child: Transform.translate(
-          offset: Offset(0, 14 * (1 - _a.value)),
+          offset: Offset(0, widget.rise * (1 - _a.value)),
           child: child,
         ),
       ),
